@@ -25,6 +25,11 @@ kotlin {
         val jvmMain by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)
+                implementation(compose.runtime)
+                implementation(compose.foundation)
+                implementation(compose.material)
+                implementation(compose.materialIconsExtended)
+                implementation("androidx.compose.ui:ui-tooling-preview:1.1.1")
             }
         }
         val jvmTest by getting {

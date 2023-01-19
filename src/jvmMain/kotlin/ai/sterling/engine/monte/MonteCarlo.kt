@@ -96,7 +96,13 @@ class MonteCarlo(val game: Game) {
      * Method used to choose a node during the expansion phase.
      */
     fun expandChoose(nodes: List<Node>): Node {
-        val random = Random().nextInt(nodes.size - 1) + 1
+        println("expandChoose nodes isEmpty: ${nodes.isEmpty()}, size minus 1: ${nodes.size -1}")
+        val random = if (nodes.size == 1) {
+            0
+        } else {
+            Random().nextInt(nodes.size - 1) + 1
+        }
+
 
 //        nodes.take(2).filter {
 //            val board = it.game.board
@@ -146,7 +152,11 @@ class MonteCarlo(val game: Game) {
      */
     fun selectChoose(nodes: List<Node>): Node {
         // TODO: UCT algorithm goes here
-        val random = Random().nextInt(nodes.size - 1) + 1
+        val random = if (nodes.size == 1) {
+            0
+        } else {
+            Random().nextInt(nodes.size - 1) + 1
+        }
 
         nodes.take(2).filter {
             val board = it.game.board
@@ -223,7 +233,11 @@ class MonteCarlo(val game: Game) {
      * phase. Note that this phase does not expand the search tree.
      */
     fun simulateChoose(moves: List<Int>, board: Board): Int {
-        val random = if(moves.size == 1) 0 else Random().nextInt( moves.size - 1) + 1
+        val random = if (moves.size == 1) {
+            0
+        } else {
+            Random().nextInt(moves.size - 1) + 1
+        }
 
         val curPlayer = if (board.playerOne.turn) 0 else 1
 

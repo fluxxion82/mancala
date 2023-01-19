@@ -192,7 +192,6 @@ class Game (
         var alpha = Double.NEGATIVE_INFINITY
         val beta = Double.NEGATIVE_INFINITY
         var score = Double.NEGATIVE_INFINITY
-        var currentMoveScore = 0.0
         val curPlayer = getBoardCurrentPlayer()
         board.legalMoves(getBoardCurrentPlayer() == 0).forEach { legalMove ->
             if (ply == 0) {
@@ -204,13 +203,6 @@ class Game (
 
             val gameCopy = deepCopy()
             val player = if (curPlayer == 0) 1 else 0
-
-            val curScore = gameCopy.score(player, gameCopy.getBoardCurrentPlayer(), legalMove)
-            if (curScore > currentMoveScore) {
-                currentMoveScore = curScore
-                move = legalMove
-                score = curScore
-            }
 
             gameCopy.makeMove(legalMove)
             val abValue = minABValue(gameCopy, ply -1, player, alpha, beta)
@@ -276,7 +268,7 @@ class Game (
                     playerTwo = Player(0, false),
                     pockets = mutableListOf(
                         4,4,4,4,4,4,0,4,4,4,4,4,4,0
-                    )
+                    ),
                 ),
             )
         }
@@ -286,7 +278,7 @@ class Game (
                 board = Board(
                     playerOne = Player(pockets[6], playerOneTurn),
                     playerTwo = Player(pockets[13], !playerOneTurn),
-                    pockets = pockets
+                    pockets = pockets,
                 ),
             ).also {
                 // player one set at init...will try to switch when calling with last pocket of 0 since not checking
