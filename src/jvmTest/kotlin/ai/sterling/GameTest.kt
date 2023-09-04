@@ -40,46 +40,6 @@ class GameTest {
     }
 
     @Test
-    fun alphaBeta() {
-        val game = Game.newGame()
-        game.makeMove(2)
-        game.makeMove(5)
-
-        var alphaBeta = game.alphaBetaMove(4)
-        println("move: ${alphaBeta.first}, score: ${alphaBeta.second}")
-
-        game.board.printBoard()
-
-        game.makeMove(8)
-
-        game.board.printBoard()
-
-        alphaBeta = game.alphaBetaMove(4)
-        println("move: ${alphaBeta.first}, score: ${alphaBeta.second}")
-    }
-
-    @Test
-    fun alphaBetaPruning() {
-        val game = Game.newGame()
-        game.makeMove(2)
-        game.makeMove(5)
-
-        var alphaBeta = game.alphaBetaMove(4)
-            // game.findBestMove(game.board, game.board.playerOne.turn, 4, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY) // alphaBeta(game, 5, player = if (game.board.playerOne.turn) 0 else 1)
-        println("move: ${alphaBeta.first}, score: ${alphaBeta.second}")
-
-        game.board.printBoard()
-
-        game.makeMove(7)
-
-        game.board.printBoard()
-
-        alphaBeta = game.alphaBetaMove(4)
-            // game.findBestMove(game.board, game.board.playerOne.turn, 4, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY) // alphaBeta(game, 5, player = if (game.board.playerOne.turn) 0 else 1) // game.alphaBetaMove(4)
-        println("move: ${alphaBeta.first}, score: ${alphaBeta.second}")
-    }
-
-    @Test
     fun captureTest() {
         val game = Game.newGame()
         game.makeMove(2)
@@ -141,67 +101,10 @@ class GameTest {
     }
 
     @Test
-    fun computerWrap() {
-        /**
-         * 9 | 9 | 0 | 0 | 0 | 0
-         * 3                   15
-         * 1 | 2 | 3 | 2 | 0 | 0
-         * your move: 3
-         * 9 | 9 | 0 | 0 | 0 | 0
-         * 3                   15
-         * 1 | 2 | 3 | 0 | 1 | 1
-         * computer move: (11, 100.0)
-         * 10 | 0 | 0 | 0 | 0 | 0
-         * 3                   15
-         * 2 | 3 | 4 | 1 | 2 | 0
-         */
-        val game = Game.newGameWithPosition(
-            mutableListOf(
-                1,2,3,2,0,0,15,0,0,0,0,9,9,3
-            ),
-            true
-        )
-
-        game.makeMove(3)
-
-        game.board.printBoard()
-
-        game.makeMove(11)
-
-        game.board.printBoard()
-    }
-
-    @Test
-    fun lastComputerMove() {
-        val game = Game.newGameWithPosition(
-            mutableListOf(
-                1,2,3,2,0,0,15,0,0,0,0,9,9,3
-            ),
-            true
-        )
-
-        game.makeMove(3)
-
-        // opponent
-        game.makeMove(11)
-
-        game.makeMove(4)
-        game.makeMove(5)
-        game.makeMove(2)
-        game.makeMove(5)
-        game.makeMove(3)
-
-        val move = game.alphaBetaMove(4)
-        // opponent
-        game.makeMove(move.first)
-        game.board.printBoard()
-    }
-
-    @Test
     fun endGame() {
         val game = Game.newGameWithPosition(
             mutableListOf(
-                0,0,2,1,1,0,25,0,0,0,0,0,1,15
+                0,0,2,1,1,0,25,0,0,0,0,0,1,18
             ),
             false
         )
@@ -212,11 +115,12 @@ class GameTest {
             !game.board.playerOne.turn && game.board.playerTwo.turn && game.status == Game.Status.PlayerTwoTurn
         }
 
-        val move = game.alphaBetaMove(4)
+        val move = 12
         // opponent
-        val status = game.makeMove(move.first)
+        val status = game.makeMove(move)
         game.board.printBoard()
 
+        println("status: $status")
         assertTrue {
             status == Game.Status.Finished.PlayerOneWin
         }

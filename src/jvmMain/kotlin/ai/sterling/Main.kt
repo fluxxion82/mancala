@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
@@ -23,11 +22,6 @@ import androidx.compose.ui.window.application
 fun AppScreen(
     mainViewModel: MainViewModel,
 ) {
-    val text by remember { mutableStateOf("") }
-    var textValue by rememberSaveable { mutableStateOf(text) }
-
-    // val stones by  mainViewModel.stones
-
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -57,22 +51,13 @@ fun AppScreen(
             fontWeight = FontWeight.Bold
         )
 
-//        OutlinedTextField(
-//            label = { Text("Enter Move") },
-//            value = textValue,
-//            onValueChange = { newText ->
-//                textValue = newText
-//            },
-//        )
-//
-//        Button(onClick = {
-//            mainViewModel.onMoveInput(textValue.toInt())
-//            textValue = ""
-//        }) {
-//            Text("Make Move")
-//        }
+        Button(
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            onClick = mainViewModel::onRestartClick
+        ) {
+            Text(text = "New Game")
+        }
     }
-
 }
 
 fun main() = application {

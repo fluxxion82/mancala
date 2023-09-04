@@ -1,82 +1,53 @@
 package ai.sterling.engine.monte
 
 import ai.sterling.model.Game
+import kotlin.math.ln
+import kotlin.math.sqrt
 
 /**
  * A particular node in the search tree. Used internally to track
  * the progress of the MCTS algorithm.
  */
-class Node {
-    /**
-     * The game at this node in the search tree.
-     */
-    val game: Game
+data class Node(
+    val game: Game,
+    val parent: Node? = null
+) {
+    var visitCount: Int = 0
+    var winCount: Double = 0.0
+    val children: MutableMap<Int, Node> = mutableMapOf()
 
-    val children
-        get() = moveToChild as Map<Int, Node>
+    // A heuristic evaluation of the board state at this node.
+    var heuristicValue: Double = 0.0
 
-    /**
-     * Nodes reachable from this node by a single move.
-     */
-    private val moveToChild = HashMap<Int, Node>()
+    fun isLeaf() = children.isEmpty()
 
-    /**
-     * The node used to reach this node.
-     */
-    val parent: Node?
-
-    /**
-     * The number of times this node has been visited by the search
-     * algorithm.
-     */
-    var visitCount = 0
-        private set
-
-    /**
-     * The number of visits to this node by the search algorithm
-     * that have resulted in simulated victories for the player
-     * associated with the node.
-     */
-    var winCount = 0
-        private set
-
-    constructor(game: Game) {
-        this.parent = null
-        this.game = game
-    }
-
-    private constructor(game: Game, parent: Node) {
-        this.parent = parent
-        this.game = game
-    }
-
-    /**
-     * Add a new child node to this one that will represent the
-     * result of the given player having chosen the given move
-     * at the parent node, producing the given board state.
-     */
     fun add(move: Int, game: Game): Node {
-        val node = Node(game, this)
-        moveToChild[move] = node
-        return node
+        val newNode = Node(game, this)
+        children[move] = newNode
+        return newNode
     }
 
-    /**
-     * Whether or not this node is a leaf node.
-     */
-    fun isLeaf() = moveToChild.size == 0
-
-    /**
-     * Report a new visit to this node, mutating its visit
-     * count and (possibly) win count in the process.
-     */
-    fun visited(winner: List<Int>) {
+    fun visited(winners: List<Int>) {
         visitCount++
-
-        if (parent == null || winner.contains(parent.game.getBoardCurrentPlayer())) {
-            // The root node always wins because play always
-            // passes through it.
+        if (winners.contains(game.getBoardCurrentPlayer())) {
             winCount++
         }
+    }
+
+    // The UCT formula with some custom enhancements
+    private fun uctValue(explorationFactor: Double = 1.0, lambda: Double = 0.1): Double {
+        if (visitCount == 0) {
+            return Double.POSITIVE_INFINITY  // Unvisited node
+        }
+
+        val exploitation = winCount / visitCount
+        val exploration = sqrt(ln(parent?.visitCount?.toDouble() ?: 1.0) / visitCount)
+
+        // Adding a game-specific heuristic term to the UCT formula
+        return exploitation + explorationFactor * exploration + lambda * heuristicValue
+    }
+
+    fun bestChild(explorationFactor: Double = 1.0, lambda: Double = 0.1): Node {
+        return children.values.maxByOrNull { it.uctValue(explorationFactor, lambda) } ?: this  // 'this' as a fallback
     }
 }

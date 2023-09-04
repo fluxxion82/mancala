@@ -8,16 +8,18 @@ data class Board(
     var lastMovePlayed: Int = 0
 
     fun playMove(position: Int): Int {
-        if (playerOne.turn && position == 6 || playerTwo.turn && position == 13 || position == 13)
-            error("Invalid position")
+        if (playerOne.turn && position == PLAYER_ONE_MANCALA_POSITION
+            || playerTwo.turn && position == PLAYER_TWO_MANCALA_POSITION
+            || position == PLAYER_TWO_MANCALA_POSITION
+            ) error("Invalid position")
 
         val stonesFromPosition = pockets[position]
         pockets[position] = 0
         var pocket = position + 1
         for (stone in 0 until stonesFromPosition) {
-            if (playerOne.turn && pocket == 13) {
+            if (playerOne.turn && pocket == PLAYER_TWO_MANCALA_POSITION) {
                 pocket = 0
-            } else if (playerTwo.turn && pocket == 6) {
+            } else if (playerTwo.turn && pocket == PLAYER_ONE_MANCALA_POSITION) {
                 pocket++
             }
 
@@ -26,7 +28,7 @@ data class Board(
             if (stone == stonesFromPosition - 1) {
                 handleLastPocket(pocket)
             } else {
-                if (pocket == 13) {
+                if (pocket == PLAYER_TWO_MANCALA_POSITION) {
                     pocket = 0
                 } else {
                     pocket++
@@ -34,6 +36,7 @@ data class Board(
             }
         }
 
+        assert(pockets.sumOf { it } == 48)
         return pocket // so we know if the play ends with a score
     }
 
@@ -41,20 +44,20 @@ data class Board(
         lastMovePlayed = position
         pockets[position] = pockets[position] + 1
 
-        if (position == 6) {
+        if (position == PLAYER_ONE_MANCALA_POSITION) {
             playerOne.mancala++
-        } else if (position == 13) {
+        } else if (position == PLAYER_TWO_MANCALA_POSITION) {
             playerTwo.mancala++
         }
 
-        assert(pockets[6] == playerOne.mancala)
-        assert(pockets[13] == playerTwo.mancala)
+        assert(pockets[PLAYER_ONE_MANCALA_POSITION] == playerOne.mancala)
+        assert(pockets[PLAYER_TWO_MANCALA_POSITION] == playerTwo.mancala)
     }
 
     private fun handleLastPocket(position: Int) {
-        if (position == 6 || position == 13) return
+        if (position == PLAYER_ONE_MANCALA_POSITION || position == PLAYER_TWO_MANCALA_POSITION) return
 
-        if (playerOne.turn && position in 7..12 || playerTwo.turn && position in 0..5) return
+        if (playerOne.turn && position in PLAYER_TWO_POCKETS || playerTwo.turn && position in PLAYER_ONE_POCKETS) return
 
         val stonesInLastPit = pockets[position]
         val oppositePosition = 12 - position
@@ -66,36 +69,40 @@ data class Board(
 
             if (playerOne.turn) {
                 pockets[6] += stonesOpposite + 1
-                playerOne.mancala = playerOne.mancala + stonesOpposite + 1
-                assert(pockets[6] == playerOne.mancala)
+                playerOne.mancala += stonesOpposite + 1
+                assert(pockets[PLAYER_ONE_MANCALA_POSITION] == playerOne.mancala)
             } else {
-                pockets[13] += stonesOpposite + 1
-                playerTwo.mancala = playerTwo.mancala  + stonesOpposite + 1
-                assert(pockets[13] == playerTwo.mancala)
+                pockets[PLAYER_TWO_MANCALA_POSITION] += stonesOpposite + 1
+                playerTwo.mancala += stonesOpposite + 1
+                assert(pockets[PLAYER_TWO_MANCALA_POSITION] == playerTwo.mancala)
             }
         }
     }
 
     fun clearRemainingPockets() {
-        for (pocket in 0..5) {
+        for (pocket in PLAYER_ONE_POCKETS) {
             val stones = pockets[pocket]
             playerOne.mancala += stones
+            pockets[PLAYER_ONE_MANCALA_POSITION] += stones
+            pockets[pocket] = 0
         }
 
-        for (pocket in 7..12) {
+        for (pocket in PLAYER_TWO_POCKETS) {
             val stones = pockets[pocket]
             playerTwo.mancala += stones
+            pockets[PLAYER_TWO_MANCALA_POSITION] += stones
+            pockets[pocket] = 0
         }
     }
 
     fun legalMoves(playerOne: Boolean): List<Int> {
         return if (playerOne) {
             pockets.mapIndexed { index, pocket ->
-                if (pocket != 0 && index in 0..5) index else -1
+                if (pocket != 0 && index in PLAYER_ONE_POCKETS) index else -1
             }.filter { it != -1 }
         } else {
             pockets.mapIndexed { index, pocket ->
-                if (pocket != 0 && index in 7..12) index else -1
+                if (pocket != 0 && index in PLAYER_TWO_POCKETS) index else -1
             }.filter { it != -1 }
         }.toList()
     }
@@ -110,7 +117,7 @@ data class Board(
         println(
             """
                        ${pockets[12]} | ${pockets[11]} | ${pockets[10]} | ${pockets[9]} | ${pockets[8]} | ${pockets[7]}
-                    ${pockets[13]}                       ${pockets[6]}
+                    ${pockets[PLAYER_TWO_MANCALA_POSITION]}                       ${pockets[PLAYER_ONE_MANCALA_POSITION]}
                        ${pockets[0]} | ${pockets[1]} | ${pockets[2]} | ${pockets[3]} | ${pockets[4]} | ${pockets[5]}
                     
                     turn: ${if (playerOne.turn) "player One" else "player two"}
@@ -118,4 +125,12 @@ data class Board(
                 """.trimIndent()
         )
     }
+
+    companion object {
+        const val PLAYER_ONE_MANCALA_POSITION = 6
+        const val PLAYER_TWO_MANCALA_POSITION = 13
+        val PLAYER_ONE_POCKETS = 0..5
+        val PLAYER_TWO_POCKETS = 7..12
+    }
+
 }

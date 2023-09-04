@@ -1,43 +1,28 @@
 package ai.sterling.engine.monte
 
-import ai.sterling.model.Board
 import ai.sterling.model.Game
-import java.util.*
 
-class MonteCarlo(val game: Game) {
-    var currentNode = Node(game)
-        private set
+class MonteCarlo(private val game: Game) {
+    private var currentNode = Node(game)
 
-    /**
-     * Apply a move that was computed externally (possibly by
-     * a human player or another AI) to the board state held
-     * by the engine.
-     *
-     * TODO: Add option to re-use sub-tree for better performance
-     */
     fun apply(game: Game) {
-        // game.makeMove(move)
         currentNode = Node(game)
     }
 
-    fun run(iterations: Int = 1): Map<Int, Double> {
+    private fun run(iterations: Int = 1): Map<Int, Double> {
         var iteration = 0
         return runWhile { iteration++ < iterations }
     }
 
     fun runBest(iterations: Int): Int {
-        return run(iterations).filterNot { it.value.isNaN() }.maxBy { it.value }.key
+        return run(iterations).maxByOrNull { it.value }?.key ?: -1
     }
 
     fun runBestWhile(callback: () -> Boolean): Int {
-        return runWhile(callback).filterNot { it.value.isNaN() }.maxBy { it.value }.key
+        return runWhile(callback).maxByOrNull { it.value }?.key ?: -1
     }
 
-    /**
-     * Run the MCTS algorithm for as long as the provided callback
-     * returns true.
-     */
-    fun runWhile(callback: () -> Boolean): Map<Int, Double> {
+    private fun runWhile(callback: () -> Boolean): Map<Int, Double> {
         while (callback()) {
             val leaf = expand(select(currentNode))
             val winners = simulate(leaf)
@@ -46,18 +31,12 @@ class MonteCarlo(val game: Game) {
 
         return currentNode.children.map {
             val node = it.value
-            val score = node.winCount * 1.0 / node.visitCount
+            val score = node.winCount / node.visitCount
             Pair(it.key, score)
         }.toMap()
     }
 
-    /**
-     * The back propagation phase of the algorithm. This is where
-     * we record the results of our simulation in nodes of the
-     * search tree that we passed through during the selection
-     * and expansion phases.
-     */
-    fun backpropagate(leaf: Node, winner: List<Int>) {
+    private fun backpropagate(leaf: Node, winner: List<Int>) {
         var current: Node? = leaf
         while (current != null) {
             current.visited(winner)
@@ -65,213 +44,97 @@ class MonteCarlo(val game: Game) {
         }
     }
 
-    /**
-     * The expansion phase of the algorithm. This is where the
-     * actual search tree is expanded downward and we pick the
-     * node that will be used as the actual starting point for
-     * the simulation phase.
-     *
-     * If the given leaf node has no possible moves (meaning
-     * it is an end-game node) then it will be returned.
-     */
-    fun expand(leaf: Node): Node {
+    private fun expand(leaf: Node): Node {
         val possibleMoves = leaf.game.board.legalMoves(game.getBoardCurrentPlayer() == 0)
         if (possibleMoves.isEmpty()) {
             return leaf
         }
 
-        // We fully hydrate the leaf node even though we will only
-        // choose one of the new leaves. This simplifies the select
-        // part of the algorithm at the cost of some memory.
-        val possibleNodes = possibleMoves.map { move ->
-            val deep = game.deepCopy()
-            deep.makeMove(move)
-            leaf.add(move, deep)
+        val possibleNodes = possibleMoves.mapNotNull { move ->
+            try {
+                val deep = game.deepCopy()
+                deep.makeMove(move)
+                leaf.add(move, deep)
+            } catch (e: IllegalStateException) {
+                null // Skip invalid moves
+            }
         }
 
         return expandChoose(possibleNodes)
     }
 
-    /**
-     * Method used to choose a node during the expansion phase.
-     */
-    fun expandChoose(nodes: List<Node>): Node {
-        println("expandChoose nodes isEmpty: ${nodes.isEmpty()}, size minus 1: ${nodes.size -1}")
-        val random = if (nodes.size == 1) {
-            0
-        } else {
-            Random().nextInt(nodes.size - 1) + 1
-        }
-
-
-//        nodes.take(2).filter {
-//            val board = it.game.board
-//            val curPlayer = it.game.getBoardCurrentPlayer()
-//
-//            val emptyPockets = board.pockets.mapIndexed { index, pocket ->
-//                if (curPlayer == 0) {
-//                    if (pocket == 0 && index in 0..5) index else -1
-//                } else {
-//                    if (pocket == 0 && index in 7..12) index else -1
-//                }
-//            }.filter { it != -1 }
-//
-//            val opponentMoves = board.legalMoves(curPlayer == 0)
-//
-//            val scorePocket = if (curPlayer == 0) 6 else 13
-//            val canScore = it.children.keys.any { key -> key + board.pockets[key] == scorePocket }
-//
-//            val canCapture = opponentMoves.any { move ->
-//                emptyPockets.contains(12 - board.pockets[move])
-//            }
-//
-//            canScore || canCapture
-//        }.ifEmpty {
-//            nodes
-//        }
-
-        return nodes[random]
+    private fun expandChoose(nodes: List<Node>): Node {
+        return nodes.random()
     }
 
-    /**
-     * The selection phase of the algorithm. This is where we
-     * decide where to expand the tree so that we can run a
-     * simulation.
-     */
-    fun select(root: Node): Node {
+    private fun select(root: Node): Node {
         var current = root
         while (!current.isLeaf()) {
-            current = selectChoose(current.children.values.toList())
+            // when lambda=0, the algorithm purely focuses on exploitation.
+            // when lambda=1, it purely focuses on the heuristic value.
+            // 0<lambda<<1 is a blend of both.
+            current = current.bestChild(explorationFactor = 2.0, lambda = 0.8)
         }
         return current
     }
 
-    /**
-     * Method used to choose a node at each step of the selection
-     * phase. Probably some kind of UCT.
-     */
-    fun selectChoose(nodes: List<Node>): Node {
-        // TODO: UCT algorithm goes here
-        val random = if (nodes.size == 1) {
-            0
-        } else {
-            Random().nextInt(nodes.size - 1) + 1
-        }
-
-        nodes.take(2).filter {
-            val board = it.game.board
-            val curPlayer = it.game.getBoardCurrentPlayer()
-
-            val emptyPockets = board.pockets.mapIndexed { index, pocket ->
-                if (curPlayer == 0) {
-                    if (pocket == 0 && index in 0..5) index else -1
-                } else {
-                    if (pocket == 0 && index in 7..12) index else -1
-                }
-            }.filter { it != -1 }
-
-            val opponentMoves = board.legalMoves(curPlayer == 0)
-
-            val scorePocket = if (curPlayer == 0) 6 else 13
-            val canScore = it.children.keys.any { key -> key + board.pockets[key] == scorePocket }
-
-            val canCapture = opponentMoves.any { move ->
-                emptyPockets.contains(12 - board.pockets[move])
-            }
-
-            canScore || canCapture
-        }.ifEmpty {
-            nodes
-        }
-
-        return nodes[random]
-    }
-
-    /**
-     * The simulation phase of the algorithm. During this step we
-     * play the game to the end and see who won, this step does
-     * not expand or otherwise mutate the search tree itself.
-     *
-     * The return value is a list of identifiers of the players
-     * that "won" (because they had the highest score). Usually
-     * there will only be one identifier in the list, but there
-     * can be more than one in the case of a draw.
-     *
-     * The list returned will never be empty.
-     *
-     * TODO: This would be more efficient if the board was optionally mutable
-     */
-    fun simulate(leaf: Node): List<Int> {
+    private fun simulate(leaf: Node): List<Int> {
         val currentGame = leaf.game.deepCopy()
-        var status = leaf.game.status
-        while (!currentGame.isGameOver()) {
-            val move = simulateChoose(
-                currentGame.board.legalMoves(currentGame.getBoardCurrentPlayer() == 0),
-                currentGame.board
-            )
-            status = currentGame.makeMove(move)
-            // currentGame = currentGame.deepCopy()
-        }
+        var status = currentGame.status
 
-        // We now have a board state for which `isOver` returns
-        // `true`, therefore we know that there will be at least
-        // one key-value pair in the map, we just need to find
-        // the maximum score and return a list of the keys that
-        // have that score.
+        while (status !is Game.Status.Finished) {
+            val move = simulateChoose(currentGame)
+            if (move == -1) {
+                break // No legal moves available, end the simulation
+            }
+            status = currentGame.makeMove(move)
+        }
 
         return when (status) {
             Game.Status.Finished.Draw -> listOf(0, 1)
             Game.Status.Finished.PlayerOneWin -> listOf(0)
             Game.Status.Finished.PlayerTwoWin -> listOf(1)
-            Game.Status.PlayerOneTurn,
-            Game.Status.PlayerTwoTurn -> error("game is over so no more turns")
+            else -> listOf() // Handle other statuses as needed
         }
     }
 
-    /**
-     * Method used to choose a move during each step of the simulation
-     * phase. Note that this phase does not expand the search tree.
-     */
-    fun simulateChoose(moves: List<Int>, board: Board): Int {
-        val random = if (moves.size == 1) {
-            0
-        } else {
-            Random().nextInt(moves.size - 1) + 1
+
+    private fun simulateChoose(currentGame: Game): Int {
+        val legalMoves = currentGame.board.legalMoves(currentGame.getBoardCurrentPlayer() == 0)
+
+        if (legalMoves.isEmpty()) {
+            return -1 // Indicate no legal moves are available
         }
 
-        val curPlayer = if (board.playerOne.turn) 0 else 1
-
-        val emptyPockets = board.pockets.mapIndexed { index, pocket ->
-            if (curPlayer == 0) {
-                if (pocket == 0 && index in 0..5) index else -1
-            } else {
-                if (pocket == 0 && index in 7..12) index else -1
+        val scoredMoves = legalMoves.mapNotNull { move ->
+            try {
+                val deep = currentGame.deepCopy()
+                deep.makeMove(move)
+                val score = deep.score(
+                    currentGame.getBoardCurrentPlayer(),
+                    if (deep.board.playerOne.turn) 1 else 0,
+                    move,
+                )
+                Pair(move, score)
+            } catch (e: IllegalStateException) {
+                null // Skip invalid moves
             }
-        }.filter { it != -1 }
+        }.sortedByDescending { -it.second }
 
-        val scorePocket = if (curPlayer == 0) 6 else 13
-        val canScore = moves.any { it + board.pockets[it] == scorePocket }
+//        println()
+//        println("position:")
+//        currentGame.board.printBoard()
+//        println("scored moves:")
+//        scoredMoves.forEach {
+//            println("${it.first} : ${it.second}")
+//        }
+//        println()
 
-        val canCapture = moves.any { move ->
-            emptyPockets.contains(12 - board.pockets[move])
+        if (scoredMoves.isEmpty()) {
+            return -1 // Indicate no scored moves are available
         }
 
-        return if (canScore || canCapture) {
-            val scoring = moves.filter { it + board.pockets[it] == scorePocket }
-            if (scoring.isEmpty()) {
-                moves.first { move ->
-                    emptyPockets.contains(12 - board.pockets[move])
-                }
-            } else {
-                scoring.first()
-            }
-        } else {
-            if (board.playerOne.turn) {
-                moves.minOf { it }
-            } else {
-                moves.sorted().reversed().first()
-            }
-            // moves[random]
-        }
+        return scoredMoves.last().first // Pick the move with the highest score
     }
+
 }

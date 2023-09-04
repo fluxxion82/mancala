@@ -2,21 +2,18 @@ package ai.sterling
 
 import ai.sterling.engine.monte.MonteCarlo
 import ai.sterling.model.Game
-import androidx.compose.runtime.getValue
+import ai.sterling.model.Game.Companion.newGame
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainViewModel(
-    private val game: Game
+    private var game: Game
 ): BaseViewModel() {
-    private val mcEngine = MonteCarlo(game)
+    private var mcEngine = MonteCarlo(game)
 
-    val stones = mutableStateListOf<Int>().apply { addAll(game.board.pockets) } // MutableStateFlow(game.board.pockets)
+    val stones = mutableStateListOf<Int>().apply { addAll(game.board.pockets) }
     val gameStatus = mutableStateOf(game.status)
 
     fun onMoveInput(position: Int) {
@@ -53,7 +50,7 @@ class MainViewModel(
         launch {
             delay(2000)
             while (game.board.playerTwo.turn && gameStatus.value !is Game.Status.Finished) {
-                val nextMove = mcEngine.runBest(20) // game.alphaBetaMove(5)
+                val nextMove = mcEngine.runBest(1000)
                 gameStatus.value = game.makeMove(nextMove)
                 mcEngine.apply(game)
                 stones.clear()
@@ -73,25 +70,14 @@ class MainViewModel(
             }
         }
     }
-}
 
-//private const val JOB_KEY = "moe.tlaster.precompose.viewmodel.ViewModelCoroutineScope.JOB_KEY"
-//val ViewModel.viewModelScope: CoroutineScope
-//    get() {
-//        val scope: CoroutineScope? = getTag(JOB_KEY)
-//        if (scope != null) {
-//            return scope
-//        }
-//        return setTagIfAbsent(
-//            JOB_KEY,
-//            CloseableCoroutineScope(SupervisorJob() + Dispatchers.Main)
-//        )
-//    }
-//
-//internal class CloseableCoroutineScope(context: CoroutineContext) : Disposable, CoroutineScope {
-//    override val coroutineContext: CoroutineContext = context
-//
-//    override fun dispose() {
-//        coroutineContext.cancel()
-//    }
-//}
+    fun onRestartClick() {
+        game = newGame()
+        mcEngine = MonteCarlo(game)
+        stones.clear()
+        stones.addAll(game.board.pockets)
+        gameStatus.value = game.status
+
+        game.board.printBoard()
+    }
+}
