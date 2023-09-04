@@ -1,6 +1,9 @@
 package ai.sterling.engine.monte
 
 import ai.sterling.model.Game
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MonteCarlo(private val game: Game) {
     private var currentNode = Node(game)
@@ -60,7 +63,11 @@ class MonteCarlo(private val game: Game) {
             }
         }
 
-        return expandChoose(possibleNodes)
+        return if (possibleNodes.isEmpty()) {
+            leaf
+        } else {
+            expandChoose(possibleNodes)
+        }
     }
 
     private fun expandChoose(nodes: List<Node>): Node {
@@ -112,14 +119,13 @@ class MonteCarlo(private val game: Game) {
                 deep.makeMove(move)
                 val score = deep.score(
                     currentGame.getBoardCurrentPlayer(),
-                    if (deep.board.playerOne.turn) 1 else 0,
-                    move,
+                    if (deep.board.playerOne.turn) 0 else 1,
                 )
                 Pair(move, score)
             } catch (e: IllegalStateException) {
                 null // Skip invalid moves
             }
-        }.sortedByDescending { -it.second }
+        }.sortedWith(compareByDescending<Pair<Int, Double>> { it.second }.thenByDescending { it.first })
 
 //        println()
 //        println("position:")
@@ -129,12 +135,13 @@ class MonteCarlo(private val game: Game) {
 //            println("${it.first} : ${it.second}")
 //        }
 //        println()
+//        println("picked move: ${scoredMoves.first().first}")
+//        println()
 
         if (scoredMoves.isEmpty()) {
             return -1 // Indicate no scored moves are available
         }
 
-        return scoredMoves.last().first // Pick the move with the highest score
+        return scoredMoves.first().first // Pick the move with the highest score
     }
-
 }

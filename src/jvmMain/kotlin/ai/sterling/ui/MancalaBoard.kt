@@ -5,7 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun MancalaBoard(
@@ -106,6 +108,8 @@ fun RowOfPockets(
     stones: List<Int>,
     onClick: (Int) -> Unit,
 ) {
+    val coroutineScope = rememberCoroutineScope()
+
     Row(
         modifier = modifier,
     ) {
@@ -114,8 +118,10 @@ fun RowOfPockets(
                 modifier = Modifier
                     .padding(5.dp)
                     .clickable {
-                        onClick(i)
-                               },
+                        coroutineScope.launch {
+                            onClick(i)
+                            delay(500L) // debounce time
+                        } },
                 alignment = alignment,
                 stoneValue = stones[i]
             )

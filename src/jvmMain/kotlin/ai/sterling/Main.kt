@@ -2,6 +2,7 @@ import ai.sterling.MainViewModel
 import ai.sterling.model.Game
 import ai.sterling.ui.MancalaBoard
 import androidx.compose.desktop.ui.tooling.preview.Preview
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +11,7 @@ import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,7 +38,6 @@ fun AppScreen(
             mainViewModel.onMoveInput(it)
         }
 
-
         Text(
             text = when (mainViewModel.gameStatus.value) {
                 Game.Status.Finished.Draw -> "Draw"
@@ -45,7 +46,11 @@ fun AppScreen(
                 Game.Status.PlayerOneTurn -> "Player One Turn"
                 Game.Status.PlayerTwoTurn -> "Player Two Turn"
             },
-            modifier = Modifier.align(Alignment.CenterHorizontally),
+            modifier = when (mainViewModel.gameStatus.value) {
+                Game.Status.PlayerOneTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Green)
+                Game.Status.PlayerTwoTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Red)
+                else -> Modifier.align(Alignment.CenterHorizontally)
+            },
             fontSize = 18.sp,
             fontStyle = FontStyle.Normal,
             fontWeight = FontWeight.Bold
@@ -70,16 +75,13 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication) {
         println("window")
 
-       // MaterialTheme {
-            Column {
-                Text("Mancala")
+        Column {
+            Text("Mancala")
 
-                AppScreen(
-                    mainViewModel,
-                )
-            }
-       // }
-
+            AppScreen(
+                mainViewModel,
+            )
+        }
     }
 }
 

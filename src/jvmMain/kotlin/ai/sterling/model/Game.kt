@@ -1,17 +1,19 @@
 package ai.sterling.model
 
+import kotlin.math.abs
+
 class Game (
     val board: Board,
     var status: Status = Status.PlayerOneTurn,
 ) {
     sealed class Status {
-        object PlayerOneTurn : Status()
-        object PlayerTwoTurn : Status()
+        data object PlayerOneTurn : Status()
+        data object PlayerTwoTurn : Status()
 
         sealed class Finished : Status() {
-            object PlayerOneWin : Finished()
-            object PlayerTwoWin : Finished()
-            object Draw : Finished()
+            data object PlayerOneWin : Finished()
+            data object PlayerTwoWin : Finished()
+            data object Draw : Finished()
         }
     }
 
@@ -21,7 +23,8 @@ class Game (
         if (status == Status.PlayerOneTurn && position in 7..13 ||
             status == Status.PlayerTwoTurn && position in 0..5 ||
             status is Status.Finished ||
-            position == 6 || position == 13) {
+            position == 6 || position == 13 ||
+            board.pockets[position] == 0) {
             error("Invalid move or status. move: $position, status: $status")
         }
 
@@ -73,50 +76,80 @@ class Game (
         }
     }
 
-    fun score(curPlayer: Int, playerTurn: Int, currentMove: Int): Double {
+    fun score(curPlayer: Int, playerTurn: Int): Double {
         if (isGameOver()) {
-            return when {
-                curPlayer == playerTurn -> 1000.0
-                else -> 0.0
+            return if (curPlayer == 0 && board.playerOne.mancala < board.playerTwo.mancala
+                || curPlayer == 1 && board.playerTwo.mancala < board.playerOne.mancala) {
+                // lose
+                -9000.0
+            } else if (curPlayer == 0 && board.playerOne.mancala > board.playerTwo.mancala
+                || curPlayer == 1 && board.playerTwo.mancala > board.playerOne.mancala) {
+                // win
+                9000.0
+            } else if (board.playerOne.mancala == board.playerTwo.mancala) {
+                // draw
+                1000.0
+            } else {
+                0.0
             }
         }
 
         var score = 50.0
         val myMancala = if (curPlayer == 0) board.playerOne.mancala else board.playerTwo.mancala
         val opponentMancala = if (curPlayer == 0) board.playerTwo.mancala else board.playerOne.mancala
-        score += 10 * (myMancala - opponentMancala)
+        score += 20 * (myMancala - opponentMancala)
+
+        // win distance
+        val winThreshold = 25
+        val distanceToWin = winThreshold - myMancala
+        score += 10 * (1.0 / (distanceToWin + 1)) // The '+1' is to avoid division by zero
+
+        // complexity
+        val myLegalMoves = board.legalMoves(curPlayer == 0).size
+        val opponentLegalMoves = board.legalMoves(curPlayer != 0).size
+        score += 2 * (myLegalMoves - opponentLegalMoves)
+
+        // Check if the player can score again in the next turn
+        val newTurnPocket = if (playerTurn == 0) 6 else 13
+
+        // Get the legal moves for the next turn
+        val nextLegalMoves = board.legalMoves(playerTurn == 0)
+        val canScore = nextLegalMoves.any { move ->
+            (move + board.pockets[move]) % 14 == newTurnPocket
+        }
+
+        // Prioritize moves that are closer to the mancala
+        val closestToMancalaMove = if (playerTurn == 0) {
+            nextLegalMoves.minOrNull()
+        } else {
+            nextLegalMoves.maxOrNull()
+        }
+
+        val nextGameState = deepCopy()
+        // Check if the player can capture in the next turn
+        val canCapture = nextLegalMoves.any { move ->
+            val oppositePocket = 12 - move
+            nextGameState.board.pockets[move] == 1 && nextGameState.board.pockets[oppositePocket] > 0
+        }
 
         val getsNewTurn = curPlayer == playerTurn
         if (getsNewTurn) {
-            score += 800
-            // Get the legal moves for the next turn
-            val nextLegalMoves = board.legalMoves(playerTurn == 0)
+            score += 2000
 
-            // Check if the player can score again in the next turn
-            val newTurnPocket = if (playerTurn == 0) 6 else 13
-            val canScore = nextLegalMoves.any { move ->
-                (move + board.pockets[move]) % 14 == newTurnPocket
-            }
             if (canScore) {
+                score += 2000
+            } else if (canCapture) {
                 score += 500
+            } else if (closestToMancalaMove != null) {
+                // Add a smaller bonus for moving stones from a pocket close to the mancala
+                score += 30 / (abs(closestToMancalaMove - newTurnPocket) + 1)
             }
-
-            // Check if the player can capture in the next turn
-//            val canCapture = nextLegalMoves.any { move ->
-//                val oppositePocket = 12 - move
-//                nextGameState.board.pockets[move] == 1 && nextGameState.board.pockets[oppositePocket] > 0
-//            }
-//            if (canCapture) {
-//                score += 200
-//            }
         } else {
-            val newTurnPocket = if (playerTurn == 0) 6 else 13
-
-            val opponentCanScore = board.legalMoves(playerTurn == 0).any { move ->
-                (move + board.pockets[move]) % 14 == newTurnPocket
-            }
-            if (opponentCanScore) {
-                score -= 400
+            // opponent
+            if (canScore) {
+                score -= 50
+            } else if (canCapture) {
+                score -= 200
             }
         }
 
