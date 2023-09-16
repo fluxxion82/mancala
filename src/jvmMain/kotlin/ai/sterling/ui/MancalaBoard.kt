@@ -31,7 +31,7 @@ fun MancalaBoard(
         ) {
             // left Mancala
             Pocket(
-                Modifier.clickable { onPocketClicked(13) },
+                Modifier,
                 alignment = Alignment.CenterStart,
                 stoneValue = stones[13],
             )
@@ -68,7 +68,7 @@ fun MancalaBoard(
         ) {
             // right mancala
             Pocket(
-                Modifier.clickable { onPocketClicked(6) },
+                Modifier,
                 alignment = Alignment.CenterEnd,
                 stoneValue = stones[6],
             )
