@@ -118,8 +118,8 @@ class MonteCarlo(private val game: Game) {
                 val deep = currentGame.deepCopy()
                 deep.makeMove(move)
                 val score = deep.score(
-                    currentGame.getBoardCurrentPlayer(),
-                    if (deep.board.playerOne.turn) 0 else 1,
+                    deep.getBoardCurrentPlayer(),
+                    // if (deep.board.playerOne.turn) 0 else 1,
                 )
                 Pair(move, score)
             } catch (e: IllegalStateException) {

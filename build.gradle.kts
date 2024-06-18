@@ -3,15 +3,14 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 plugins {
     kotlin("multiplatform")
     id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 group = "ai.sterling"
 version = "1.0-SNAPSHOT"
 
 kotlin {
-    jvm {
-        withJava()
-    }
+    jvm()
 
     sourceSets {
         val jvmMain by getting {
@@ -21,7 +20,7 @@ kotlin {
                 implementation(compose.foundation)
                 implementation(compose.material)
                 implementation(compose.materialIconsExtended)
-                implementation("androidx.compose.ui:ui-tooling-preview:1.1.1")
+                //implementation("androidx.compose.ui:ui-tooling-preview:1.1.1")
             }
         }
         val jvmTest by getting {

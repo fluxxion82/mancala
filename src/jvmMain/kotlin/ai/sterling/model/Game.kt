@@ -76,21 +76,16 @@ class Game (
         }
     }
 
-    fun score(curPlayer: Int, playerTurn: Int): Double {
+    fun score(curPlayer: Int): Double {
         if (isGameOver()) {
-            return if (curPlayer == 0 && board.playerOne.mancala < board.playerTwo.mancala
-                || curPlayer == 1 && board.playerTwo.mancala < board.playerOne.mancala) {
-                // lose
-                -9000.0
-            } else if (curPlayer == 0 && board.playerOne.mancala > board.playerTwo.mancala
-                || curPlayer == 1 && board.playerTwo.mancala > board.playerOne.mancala) {
-                // win
-                9000.0
-            } else if (board.playerOne.mancala == board.playerTwo.mancala) {
-                // draw
-                1000.0
-            } else {
-                0.0
+            // Game over conditions
+            return when {
+                curPlayer == 0 && board.playerOne.mancala < board.playerTwo.mancala ||
+                        curPlayer == 1 && board.playerTwo.mancala < board.playerOne.mancala -> -9000.0
+                curPlayer == 0 && board.playerOne.mancala > board.playerTwo.mancala ||
+                        curPlayer == 1 && board.playerTwo.mancala > board.playerOne.mancala -> 9000.0
+                board.playerOne.mancala == board.playerTwo.mancala -> 1000.0
+                else -> 0.0
             }
         }
 
@@ -99,58 +94,50 @@ class Game (
         val opponentMancala = if (curPlayer == 0) board.playerTwo.mancala else board.playerOne.mancala
         score += 20 * (myMancala - opponentMancala)
 
-        // win distance
-        val winThreshold = 25
-        val distanceToWin = winThreshold - myMancala
-        score += 10 * (1.0 / (distanceToWin + 1)) // The '+1' is to avoid division by zero
+        // Adjusting strategy based on ability to score, capture, and defense mechanisms
+        val mySide =  board.pockets // if (curPlayer == 0) board.pockets.subList(0, 6)  else board.pockets.subList(7,12)
+        val opponentSide = board.pockets // if (curPlayer == 0) board.pockets.subList(7,12) else board.pockets.subList(0,6)
+        val myLegalMoves = board.legalMoves(curPlayer == 0)
 
-        // complexity
-        val myLegalMoves = board.legalMoves(curPlayer == 0).size
-        val opponentLegalMoves = board.legalMoves(curPlayer != 0).size
-        score += 2 * (myLegalMoves - opponentLegalMoves)
-
-        // Check if the player can score again in the next turn
-        val newTurnPocket = if (playerTurn == 0) 6 else 13
-
-        // Get the legal moves for the next turn
-        val nextLegalMoves = board.legalMoves(playerTurn == 0)
-        val canScore = nextLegalMoves.any { move ->
-            (move + board.pockets[move]) % 14 == newTurnPocket
-        }
-
-        // Prioritize moves that are closer to the mancala
-        val closestToMancalaMove = if (playerTurn == 0) {
-            nextLegalMoves.minOrNull()
-        } else {
-            nextLegalMoves.maxOrNull()
-        }
-
-        val nextGameState = deepCopy()
-        // Check if the player can capture in the next turn
-        val canCapture = nextLegalMoves.any { move ->
-            val oppositePocket = 12 - move
-            nextGameState.board.pockets[move] == 1 && nextGameState.board.pockets[oppositePocket] > 0
-        }
-
-        val getsNewTurn = curPlayer == playerTurn
-        if (getsNewTurn) {
-            score += 2000
-
-            if (canScore) {
-                score += 2000
-            } else if (canCapture) {
-                score += 500
-            } else if (closestToMancalaMove != null) {
-                // Add a smaller bonus for moving stones from a pocket close to the mancala
-                score += 30 / (abs(closestToMancalaMove - newTurnPocket) + 1)
+        // Priority 1: Can score another turn
+        myLegalMoves.forEach { move ->
+            val endingPocketIndex = (move + mySide[move]) % 14
+            if (endingPocketIndex == myMancala) {
+                score += 3000.0 // High score for getting another turn
             }
-        } else {
-            // opponent
-            if (canScore) {
-                score -= 50
-            } else if (canCapture) {
-                score -= 200
+        }
+
+        // Priority 2: Can capture opponent's stones
+        var maxCapture = 0
+        myLegalMoves.forEach { move ->
+            val stonesToMove = mySide[move]
+            val landingIndex = move + stonesToMove
+            if (landingIndex < 6 && mySide[landingIndex] == 0 && opponentSide[5 - landingIndex] > 0) { // Assumes index 0-5 for pockets
+                maxCapture = maxOf(maxCapture, opponentSide[5 - landingIndex])
             }
+        }
+        if (maxCapture > 0) score += 2000.0 + maxCapture // Value capturing moves, adding the number of stones captured as a bonus
+
+        // Priority 3: Defense against opponent's potential capture
+        val opponentLegalMoves = board.legalMoves(curPlayer != 0)
+        var maxOpponentCapture = 0
+        opponentLegalMoves.forEach { move ->
+            val stonesToMove = opponentSide[move]
+            val landingIndex = move + stonesToMove
+            if (landingIndex < 6 && opponentSide[landingIndex] == 0 && mySide[5 - landingIndex] > 0) {
+                maxOpponentCapture = maxOf(maxOpponentCapture, mySide[5 - landingIndex])
+            }
+        }
+        if (maxOpponentCapture > 0) score -= 1500.0 + maxOpponentCapture // Penalize positions where the opponent can capture
+
+        // Priority 4: Set up for combo scores
+        if (mySide[4] == 1) { // Assuming index 4 is the second-to-right pocket
+            score += 1000.0 // Bonus for setting up a position to score twice in the next turn
+        }
+
+        // Priority 5: Clear out right-most pockets
+        if (mySide[5] > 0) { // Assuming index 5 is the right-most pocket
+            score += 500.0 // Bonus for having stones in the right-most pocket to clear it out
         }
 
         return score
