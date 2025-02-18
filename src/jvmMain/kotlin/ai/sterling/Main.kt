@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.*
-import androidx.compose.runtime.*
+import androidx.compose.material.Button
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,15 +44,15 @@ fun AppScreen(
 
         Text(
             text = when (mainViewModel.gameStatus.value) {
-                Game.Status.Finished.Draw -> "Draw"
-                Game.Status.Finished.PlayerOneWin -> "Player One Wins"
-                Game.Status.Finished.PlayerTwoWin -> "Player Two Wins"
-                Game.Status.PlayerOneTurn -> "Player One Turn"
-                Game.Status.PlayerTwoTurn -> "Player Two Turn"
+                Game.GameStatus.Finished.Draw -> "Draw"
+                Game.GameStatus.Finished.PlayerOneWin -> "Player One Wins"
+                Game.GameStatus.Finished.PlayerTwoWin -> "Player Two Wins"
+                Game.GameStatus.PlayerOneTurn -> "Player One Turn"
+                Game.GameStatus.PlayerTwoTurn -> "Player Two Turn"
             },
             modifier = when (mainViewModel.gameStatus.value) {
-                Game.Status.PlayerOneTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Green)
-                Game.Status.PlayerTwoTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Red)
+                Game.GameStatus.PlayerOneTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Green)
+                Game.GameStatus.PlayerTwoTurn -> Modifier.align(Alignment.CenterHorizontally).background(Color.Red)
                 else -> Modifier.align(Alignment.CenterHorizontally)
             },
             fontSize = 18.sp,
@@ -71,7 +73,7 @@ fun main() = application {
     println("main")
 
     val mainViewModel = remember {
-        MainViewModel(Game.newGame())
+        MainViewModel()
     }
 
     Window(

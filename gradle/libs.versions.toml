@@ -1,0 +1,28 @@
+[versions]
+## SDK Versions
+lifecycleViewmodel = "2.8.4"
+
+# Dependencies
+kotlin = "2.1.10"
+coroutines = "1.10.1"
+
+compose-bom = "2025.02.00"
+
+compose-multiplatorm = "1.7.3"
+
+[libraries]
+kotlin-test-annotations-common = { module = "org.jetbrains.kotlin:kotlin-test-annotations-common" }
+kotlin-test-common = { module = "org.jetbrains.kotlin:kotlin-test-common" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test" }
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycleViewmodel" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+jetbrains-compose = { id = "org.jetbrains.compose", version.ref = "compose-multiplatorm" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

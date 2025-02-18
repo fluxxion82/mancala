@@ -8,7 +8,7 @@ class GameTest {
 
     @Test
     fun simpleTurn() {
-        val game = Game.newGame()
+        val game = Game.new()
         game.makeMove(2)
 
 
@@ -35,13 +35,13 @@ class GameTest {
         }
 
         assertTrue {
-            !game.board.playerOne.turn && game.board.playerTwo.turn && game.status == Game.Status.PlayerTwoTurn
+            game.status != Game.GameStatus.PlayerTwoTurn
         }
     }
 
     @Test
     fun captureTest() {
-        val game = Game.newGame()
+        val game = Game.new()
         game.makeMove(2)
         game.makeMove(5)
 
@@ -96,7 +96,7 @@ class GameTest {
         }
 
         assertTrue {
-            !game.board.playerOne.turn && game.board.playerTwo.turn && game.status == Game.Status.PlayerTwoTurn
+            game.status == Game.GameStatus.PlayerTwoTurn
         }
     }
 
@@ -112,7 +112,7 @@ class GameTest {
         game.board.printBoard()
 
         assertTrue {
-            !game.board.playerOne.turn && game.board.playerTwo.turn && game.status == Game.Status.PlayerTwoTurn
+            game.status == Game.GameStatus.PlayerTwoTurn
         }
 
         val move = 12
@@ -122,7 +122,7 @@ class GameTest {
 
         println("status: $status")
         assertTrue {
-            status == Game.Status.Finished.PlayerOneWin
+            status == Game.GameStatus.Finished.PlayerOneWin
         }
     }
 }

@@ -1,9 +1,9 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
-    kotlin("multiplatform")
-    id("org.jetbrains.compose")
-    id("org.jetbrains.kotlin.plugin.compose")
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.jetbrains.compose)
+    alias(libs.plugins.compose.compiler)
 }
 
 group = "ai.sterling"
@@ -21,6 +21,11 @@ kotlin {
                 implementation(compose.material)
                 implementation(compose.materialIconsExtended)
                 //implementation("androidx.compose.ui:ui-tooling-preview:1.1.1")
+
+                implementation(libs.kotlinx.coroutines.core)
+                implementation(libs.kotlinx.coroutines.swing)
+
+                implementation(libs.lifecycle.viewmodel)
             }
         }
         val jvmTest by getting {

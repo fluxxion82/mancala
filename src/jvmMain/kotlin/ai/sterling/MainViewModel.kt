@@ -2,87 +2,102 @@ package ai.sterling
 
 import ai.sterling.engine.monte.MonteCarlo
 import ai.sterling.model.Game
-import ai.sterling.model.Game.Companion.newGame
+import ai.sterling.model.Game.GameStatus
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class MainViewModel(
-    private var game: Game
-): BaseViewModel() {
+class MainViewModel: ViewModel() {
+    private var game: Game = Game.new()
     private var mcEngine = MonteCarlo(game)
 
-    val stones = mutableStateListOf<Int>().apply { addAll(game.board.pockets) }
-    val gameStatus = mutableStateOf(game.status)
+    val stones = mutableStateListOf<Int>().apply {
+        addAll(game.board.pockets)
+    }
+    val gameStatus = mutableStateOf<GameStatus>(GameStatus.PlayerOneTurn)
     private var computerMoveJob: Job? = null
 
     fun onMoveInput(position: Int) {
-        if (gameStatus.value is Game.Status.Finished) {
+        if (gameStatus.value is GameStatus.Finished) {
             return
         }
 
-        launch {
-            gameStatus.value = game.makeMove(position)
-            mcEngine.apply(game)
-            stones.clear()
-            stones.addAll(game.board.pockets)
+        viewModelScope.launch {
+            try {
+                game = game.makeMove(position)
+                updateGameState()
 
-            game.board.printBoard()
-            val status = gameStatus.value
-            println("your move: $position, stats=$status")
-            println()
+                printGameState(position, "Player")
 
-            if (status is Game.Status.Finished) {
-                when (status) {
-                    is Game.Status.Finished.Draw -> println("draw")
-                    is Game.Status.Finished.PlayerOneWin -> println("player one win")
-                    is Game.Status.Finished.PlayerTwoWin -> println("player two win")
+                if (gameStatus.value !is GameStatus.Finished) {
+                    makeComputerMove()
                 }
-            } else {
-                makeComputerMove()
+            } catch (e: IllegalArgumentException) {
+                // Handle invalid move
+                println("Invalid move: ${e.message}")
             }
         }
     }
 
     private fun makeComputerMove() {
-        if (game.board.playerTwo.turn && gameStatus.value !is Game.Status.Finished) {
-            println("makeComputerMove")
-            computerMoveJob = launch {
+        if (gameStatus.value == GameStatus.PlayerTwoTurn) {
+            computerMoveJob = viewModelScope.launch {
                 delay(2000)
-                while (game.board.playerTwo.turn && gameStatus.value !is Game.Status.Finished) {
+                while (gameStatus.value == GameStatus.PlayerTwoTurn) {
                     mcEngine.apply(game)
-                    val nextMove = mcEngine.runBest(25000)
-                    gameStatus.value = game.makeMove(nextMove)
-                    stones.clear()
-                    stones.addAll(game.board.pockets)
+                    val nextMove = mcEngine.runBest(20000)
 
-                    val status = gameStatus.value
-                    if (status is Game.Status.Finished) {
-                        when (status) {
-                            is Game.Status.Finished.Draw -> println("draw")
-                            is Game.Status.Finished.PlayerOneWin -> println("player one win")
-                            is Game.Status.Finished.PlayerTwoWin -> println("player two win")
-                        }
+                    try {
+                        game = game.makeMove(nextMove)
+                        updateGameState()
+                        printGameState(nextMove, "Computer")
+                    } catch (e: IllegalArgumentException) {
+                        println("Invalid computer move: ${e.message}")
+                        break
                     }
-
-                    println("computer move: $nextMove")
-                    game.board.printBoard()
-                    println()
                 }
             }
         }
     }
 
-    fun onRestartClick() {
-        computerMoveJob?.cancel()
-        game = newGame()
-        mcEngine = MonteCarlo(game)
+    private fun updateGameState() {
+        gameStatus.value = game.status
         stones.clear()
         stones.addAll(game.board.pockets)
-        gameStatus.value = game.status
+        mcEngine.apply(game)
+    }
 
-        game.board.printBoard()
+    private fun printGameState(move: Int, player: String) {
+        println("$player move: $move")
+        println("Game status: ${gameStatus.value}")
+        printBoard()
+
+        when (gameStatus.value) {
+            is GameStatus.Finished.Draw -> println("Game ended in a draw")
+            is GameStatus.Finished.PlayerOneWin -> println("Player One wins!")
+            is GameStatus.Finished.PlayerTwoWin -> println("Player Two wins!")
+            else -> println()
+        }
+    }
+
+    private fun printBoard() {
+        val board = stones
+        println("""
+            ${board[12]} | ${board[11]} | ${board[10]} | ${board[9]} | ${board[8]} | ${board[7]}
+         ${board[13]}                       ${board[6]}
+            ${board[0]} | ${board[1]} | ${board[2]} | ${board[3]} | ${board[4]} | ${board[5]}
+        """.trimIndent())
+    }
+
+    fun onRestartClick() {
+        computerMoveJob?.cancel()
+        game = Game.new()
+        mcEngine = MonteCarlo(game)
+        updateGameState()
+        printBoard()
     }
 }

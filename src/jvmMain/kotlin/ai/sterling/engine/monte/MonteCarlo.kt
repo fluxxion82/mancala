@@ -1,147 +1,111 @@
 package ai.sterling.engine.monte
 
+import ai.sterling.engine.monte.PositionEvaluator.evaluatePosition
+import ai.sterling.engine.monte.test.EvalWeights
 import ai.sterling.model.Game
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import ai.sterling.model.Game.GameStatus
 
-class MonteCarlo(private val game: Game) {
-    private var currentNode = Node(game)
+class MonteCarlo(game: Game, private val weights: EvalWeights = EvalWeights()) {
+    private var rootNode = Node(game)
 
     fun apply(game: Game) {
-        currentNode = Node(game)
-    }
-
-    private fun run(iterations: Int = 1): Map<Int, Double> {
-        var iteration = 0
-        return runWhile { iteration++ < iterations }
+        rootNode = Node(game)
     }
 
     fun runBest(iterations: Int): Int {
         return run(iterations).maxByOrNull { it.value }?.key ?: -1
     }
 
-    fun runBestWhile(callback: () -> Boolean): Int {
-        return runWhile(callback).maxByOrNull { it.value }?.key ?: -1
-    }
-
-    private fun runWhile(callback: () -> Boolean): Map<Int, Double> {
-        while (callback()) {
-            val leaf = expand(select(currentNode))
+    private fun run(iterations: Int): Map<Int, Double> {
+        repeat(iterations) {
+            val leaf = select(rootNode).let { selected ->
+                if (selected.game.status !is GameStatus.Finished) expand(selected) else selected
+            }
             val winners = simulate(leaf)
             backpropagate(leaf, winners)
         }
 
-        return currentNode.children.map {
-            val node = it.value
-            val score = node.winCount / node.visitCount
-            Pair(it.key, score)
-        }.toMap()
-    }
-
-    private fun backpropagate(leaf: Node, winner: List<Int>) {
-        var current: Node? = leaf
-        while (current != null) {
-            current.visited(winner)
-            current = current.parent
+        return rootNode.children.mapValues { (_, node) ->
+            node.winCount / node.visitCount
         }
     }
 
-    private fun expand(leaf: Node): Node {
-        val possibleMoves = leaf.game.board.legalMoves(game.getBoardCurrentPlayer() == 0)
-        if (possibleMoves.isEmpty()) {
-            return leaf
-        }
-
-        val possibleNodes = possibleMoves.mapNotNull { move ->
-            try {
-                val deep = game.deepCopy()
-                deep.makeMove(move)
-                leaf.add(move, deep)
-            } catch (e: IllegalStateException) {
-                null // Skip invalid moves
-            }
-        }
-
-        return if (possibleNodes.isEmpty()) {
-            leaf
-        } else {
-            expandChoose(possibleNodes)
-        }
-    }
-
-    private fun expandChoose(nodes: List<Node>): Node {
-        return nodes.random()
-    }
-
-    private fun select(root: Node): Node {
-        var current = root
-        while (!current.isLeaf()) {
-            // when lambda=0, the algorithm purely focuses on exploitation.
-            // when lambda=1, it purely focuses on the heuristic value.
-            // 0<lambda<<1 is a blend of both.
-            current = current.bestChild(explorationFactor = 2.0, lambda = 0.8)
+    private fun select(node: Node): Node {
+        var current = node
+        while (!current.isLeaf && current.game.status !is GameStatus.Finished) {
+            current = current.getBestChild()
         }
         return current
     }
 
-    private fun simulate(leaf: Node): List<Int> {
-        val currentGame = leaf.game.deepCopy()
-        var status = currentGame.status
-
-        while (status !is Game.Status.Finished) {
-            val move = simulateChoose(currentGame)
-            if (move == -1) {
-                break // No legal moves available, end the simulation
-            }
-            status = currentGame.makeMove(move)
+    private fun expand(leaf: Node): Node {
+        val legalMoves = when (leaf.game.status) {
+            is GameStatus.PlayerOneTurn -> leaf.game.board.legalMoves(true)
+            is GameStatus.PlayerTwoTurn -> leaf.game.board.legalMoves(false)
+            is GameStatus.Finished -> emptyList()
         }
 
-        return when (status) {
-            Game.Status.Finished.Draw -> listOf(0, 1)
-            Game.Status.Finished.PlayerOneWin -> listOf(0)
-            Game.Status.Finished.PlayerTwoWin -> listOf(1)
-            else -> listOf() // Handle other statuses as needed
+        if (legalMoves.isEmpty()) return leaf
+
+        val children = legalMoves.mapNotNull { move ->
+            try {
+                val newGame = leaf.game.makeMove(move)
+                move to leaf.addChild(move, newGame)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        }
+
+        val scoringMove = children.find { (move, node) ->
+            val isPlayerOne = node.game.status == GameStatus.PlayerOneTurn
+            val position = evaluatePosition(node.game, isPlayerOne, weights)
+            position > 5000
+        }
+
+        return scoringMove?.second ?: (children.randomOrNull()?.second ?: leaf)
+    }
+
+    private fun simulate(node: Node): List<Int> {
+        var currentGame = node.game
+
+        while (currentGame.status !is GameStatus.Finished) {
+            val isPlayerOne = currentGame.status == GameStatus.PlayerOneTurn
+            val move = selectSimulationMove(currentGame, isPlayerOne) ?: break
+
+            try {
+                currentGame = currentGame.makeMove(move)
+            } catch (e: IllegalArgumentException) {
+                break
+            }
+        }
+
+        return when (currentGame.status) {
+            is GameStatus.Finished.Draw -> listOf(0, 1)
+            is GameStatus.Finished.PlayerOneWin -> listOf(0)
+            is GameStatus.Finished.PlayerTwoWin -> listOf(1)
+            else -> emptyList()
         }
     }
 
+    private fun selectSimulationMove(game: Game, isPlayerOne: Boolean): Int? {
+        val legalMoves = game.board.legalMoves(isPlayerOne)
+        if (legalMoves.isEmpty()) return null
 
-    private fun simulateChoose(currentGame: Game): Int {
-        val legalMoves = currentGame.board.legalMoves(currentGame.getBoardCurrentPlayer() == 0)
-
-        if (legalMoves.isEmpty()) {
-            return -1 // Indicate no legal moves are available
-        }
-
-        val scoredMoves = legalMoves.mapNotNull { move ->
+        return legalMoves.maxByOrNull { move ->
             try {
-                val deep = currentGame.deepCopy()
-                deep.makeMove(move)
-                val score = deep.score(
-                    deep.getBoardCurrentPlayer(),
-                    // if (deep.board.playerOne.turn) 0 else 1,
-                )
-                Pair(move, score)
-            } catch (e: IllegalStateException) {
-                null // Skip invalid moves
+                val newGame = game.makeMove(move)
+                evaluatePosition(newGame, isPlayerOne, weights)
+            } catch (e: IllegalArgumentException) {
+                Double.NEGATIVE_INFINITY
             }
-        }.sortedWith(compareByDescending<Pair<Int, Double>> { it.second }.thenByDescending { it.first })
-
-//        println()
-//        println("position:")
-//        currentGame.board.printBoard()
-//        println("scored moves:")
-//        scoredMoves.forEach {
-//            println("${it.first} : ${it.second}")
-//        }
-//        println()
-//        println("picked move: ${scoredMoves.first().first}")
-//        println()
-
-        if (scoredMoves.isEmpty()) {
-            return -1 // Indicate no scored moves are available
         }
+    }
 
-        return scoredMoves.first().first // Pick the move with the highest score
+    private fun backpropagate(leaf: Node, winners: List<Int>) {
+        var current: Node? = leaf
+        while (current != null) {
+            current.recordVisit(winners)
+            current = current.parent
+        }
     }
 }
