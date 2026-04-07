@@ -1,6 +1,6 @@
 package ai.sterling
 
-import ai.sterling.engine.monte.MonteCarlo
+import ai.sterling.engine.ml.NeuralNetEngine
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
 import androidx.compose.runtime.mutableStateListOf
@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 
 class MainViewModel: ViewModel() {
     private var game: Game = Game.new()
-    private var mcEngine = MonteCarlo(game)
+    private val neuralNetEngine = NeuralNetEngine()
 
     val stones = mutableStateListOf<Int>().apply {
         addAll(game.board.pockets)
@@ -48,8 +48,7 @@ class MainViewModel: ViewModel() {
             computerMoveJob = viewModelScope.launch {
                 delay(2000)
                 while (gameStatus.value == GameStatus.PlayerTwoTurn) {
-                    mcEngine.apply(game)
-                    val nextMove = mcEngine.runBest(20000)
+                    val nextMove = neuralNetEngine.selectMove(game)
 
                     try {
                         game = game.makeMove(nextMove)
@@ -68,7 +67,6 @@ class MainViewModel: ViewModel() {
         gameStatus.value = game.status
         stones.clear()
         stones.addAll(game.board.pockets)
-        mcEngine.apply(game)
     }
 
     private fun printGameState(move: Int, player: String) {
@@ -96,7 +94,6 @@ class MainViewModel: ViewModel() {
     fun onRestartClick() {
         computerMoveJob?.cancel()
         game = Game.new()
-        mcEngine = MonteCarlo(game)
         updateGameState()
         printBoard()
     }
