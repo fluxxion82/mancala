@@ -10,7 +10,7 @@ class MCTest {
 
     @Test
     fun eval() {
-        val game = Game.newGame()
+        val game = Game.new()
         game.makeMove(2)
         game.makeMove(5)
 

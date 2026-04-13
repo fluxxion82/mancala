@@ -21,24 +21,36 @@ data class Board(
         require(isValidMove(position, isPlayerOneTurn)) { "Invalid move: $position" }
 
         val (newPockets, lastPosition, stonesCollected) = distributeStones(position, isPlayerOneTurn)
-        val (updatedPockets, capturedStones) = handleCapture(newPockets, lastPosition, isPlayerOneTurn)
+        val (capturedPockets, capturedStones) = handleCapture(newPockets, lastPosition, isPlayerOneTurn)
 
-        val (newPlayerOne, newPlayerTwo) = when {
-            isPlayerOneTurn -> Pair(
-                playerOne.addToMancala(stonesCollected + capturedStones),
-                playerTwo
-            )
-            else -> Pair(
-                playerOne,
-                playerTwo.addToMancala(stonesCollected + capturedStones)
-            )
+        // Tentative mancala totals after this move's distribution and capture
+        var p1Mancala = playerOne.mancala + (if (isPlayerOneTurn) stonesCollected + capturedStones else 0)
+        var p2Mancala = playerTwo.mancala + (if (!isPlayerOneTurn) stonesCollected + capturedStones else 0)
+
+        // Sweep remaining stones if one side is empty (standard Kalah end-of-game rule)
+        val sweptPockets = capturedPockets.toMutableList()
+        val p0SideSum = PLAYER_ONE_POCKETS.sumOf { sweptPockets[it] }
+        val p1SideSum = PLAYER_TWO_POCKETS.sumOf { sweptPockets[it] }
+        if (p0SideSum == 0 || p1SideSum == 0) {
+            if (p1SideSum > 0) {
+                p2Mancala += p1SideSum
+                for (i in PLAYER_TWO_POCKETS) sweptPockets[i] = 0
+            }
+            if (p0SideSum > 0) {
+                p1Mancala += p0SideSum
+                for (i in PLAYER_ONE_POCKETS) sweptPockets[i] = 0
+            }
         }
+
+        // Sync mancala pocket entries with player objects (init block requires this)
+        sweptPockets[PLAYER_ONE_MANCALA] = p1Mancala
+        sweptPockets[PLAYER_TWO_MANCALA] = p2Mancala
 
         return MoveResult(
             board = copy(
-                pockets = updatedPockets,
-                playerOne = newPlayerOne,
-                playerTwo = newPlayerTwo
+                pockets = sweptPockets,
+                playerOne = Player(p1Mancala),
+                playerTwo = Player(p2Mancala)
             ),
             endsInMancala = lastPosition == if (isPlayerOneTurn) PLAYER_ONE_MANCALA else PLAYER_TWO_MANCALA
         )

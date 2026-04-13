@@ -3,6 +3,7 @@ package ai.sterling
 import ai.sterling.engine.ml.NeuralNetEngine
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
+import ai.sterling.util.GameLogger
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
@@ -14,12 +15,17 @@ import kotlinx.coroutines.launch
 class MainViewModel: ViewModel() {
     private var game: Game = Game.new()
     private val neuralNetEngine = NeuralNetEngine()
+    private val gameLogger = GameLogger()
 
     val stones = mutableStateListOf<Int>().apply {
         addAll(game.board.pockets)
     }
     val gameStatus = mutableStateOf<GameStatus>(GameStatus.PlayerOneTurn)
     private var computerMoveJob: Job? = null
+
+    init {
+        gameLogger.startGame(humanIsPlayerOne = true)
+    }
 
     fun onMoveInput(position: Int) {
         if (gameStatus.value is GameStatus.Finished) {
@@ -28,12 +34,16 @@ class MainViewModel: ViewModel() {
 
         viewModelScope.launch {
             try {
+                val wasPlayerOne = gameStatus.value == GameStatus.PlayerOneTurn
                 game = game.makeMove(position)
+                gameLogger.recordMove(position, wasPlayerOne)
                 updateGameState()
 
                 printGameState(position, "Player")
 
-                if (gameStatus.value !is GameStatus.Finished) {
+                if (gameStatus.value is GameStatus.Finished) {
+                    gameLogger.endGame(gameStatus.value)
+                } else {
                     makeComputerMove()
                 }
             } catch (e: IllegalArgumentException) {
@@ -51,9 +61,15 @@ class MainViewModel: ViewModel() {
                     val nextMove = neuralNetEngine.selectMove(game)
 
                     try {
+                        val wasPlayerOne = gameStatus.value == GameStatus.PlayerOneTurn
                         game = game.makeMove(nextMove)
+                        gameLogger.recordMove(nextMove, wasPlayerOne)
                         updateGameState()
                         printGameState(nextMove, "Computer")
+
+                        if (gameStatus.value is GameStatus.Finished) {
+                            gameLogger.endGame(gameStatus.value)
+                        }
                     } catch (e: IllegalArgumentException) {
                         println("Invalid computer move: ${e.message}")
                         break
@@ -96,5 +112,6 @@ class MainViewModel: ViewModel() {
         game = Game.new()
         updateGameState()
         printBoard()
+        gameLogger.startGame(humanIsPlayerOne = true)
     }
 }
