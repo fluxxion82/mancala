@@ -5,19 +5,49 @@ import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 import kotlin.math.tanh
 
 class NeuralNetEngine(private val searchDepth: Int = 5) {
 
-    private val layers: List<Pair<Array<FloatArray>, FloatArray>>
-    private val actionW: Array<FloatArray>
-    private val actionB: FloatArray
-    private val valueLayers: List<Pair<Array<FloatArray>, FloatArray>>
-    private val valueW: Array<FloatArray>
-    private val valueB: FloatArray
+    // V1 (plain MLP) fields
+    private var v1Layers: List<Pair<Array<FloatArray>, FloatArray>>? = null
+    private var v1ActionW: Array<FloatArray>? = null
+    private var v1ActionB: FloatArray? = null
+    private var v1ValueLayers: List<Pair<Array<FloatArray>, FloatArray>>? = null
+    private var v1ValueW: Array<FloatArray>? = null
+    private var v1ValueB: FloatArray? = null
+
+    // V2 (ResNet + LayerNorm) fields
+    private var v2ProjW: Array<FloatArray>? = null
+    private var v2ProjB: FloatArray? = null
+    private var v2ProjLnScale: FloatArray? = null
+    private var v2ProjLnBias: FloatArray? = null
+    private var v2ResBlocks: List<ResBlock>? = null
+    private var v2PolicyW1: Array<FloatArray>? = null
+    private var v2PolicyB1: FloatArray? = null
+    private var v2PolicyLnScale: FloatArray? = null
+    private var v2PolicyLnBias: FloatArray? = null
+    private var v2PolicyW2: Array<FloatArray>? = null
+    private var v2PolicyB2: FloatArray? = null
+    private var v2ValueW1: Array<FloatArray>? = null
+    private var v2ValueB1: FloatArray? = null
+    private var v2ValueLnScale: FloatArray? = null
+    private var v2ValueLnBias: FloatArray? = null
+    private var v2ValueW2: Array<FloatArray>? = null
+    private var v2ValueB2: FloatArray? = null
+
+    private val version: Int
     private val activation: String
     private val inputDim: Int
     private val hasValueHead: Boolean
+
+    private data class ResBlock(
+        val w1: Array<FloatArray>, val b1: FloatArray,
+        val ln1Scale: FloatArray, val ln1Bias: FloatArray,
+        val w2: Array<FloatArray>, val b2: FloatArray,
+        val ln2Scale: FloatArray, val ln2Bias: FloatArray,
+    )
 
     init {
         val npz = NpyReader.loadNpz(
@@ -25,54 +55,98 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
                 ?: error("Model weights not found in resources")
         )
 
-        val nLayers = npz.arrays["n_layers"]!!.first().toInt()
-        activation = npz.strings["activation"] ?: "tanh"
+        version = npz.arrays["version"]?.firstOrNull()?.toInt() ?: 1
 
-        // Policy network
-        val layerList = mutableListOf<Pair<Array<FloatArray>, FloatArray>>()
-        for (i in 0 until nLayers) {
-            val w = npz.arrays["fe_w$i"]!!
-            val b = npz.arrays["fe_b$i"]!!
-            val outputDim = b.size
-            val inferredInputDim = if (i == 0) w.size / outputDim else layerList[i - 1].second.size
-            layerList.add(Pair(reshape(w, inferredInputDim, outputDim), b))
-        }
-        layers = layerList
-        inputDim = layers[0].first.size
+        if (version >= 2) {
+            activation = "relu"
+            val hiddenDim = npz.arrays["hidden_dim"]!!.first().toInt()
+            val numBlocks = npz.arrays["num_blocks"]!!.first().toInt()
+            inputDim = 56
 
-        val lastHiddenSize = layers.last().second.size
-        actionW = reshape(npz.arrays["action_w"]!!, lastHiddenSize, 6)
-        actionB = npz.arrays["action_b"]!!
+            // Input projection
+            v2ProjW = reshape(npz.arrays["proj_w"]!!, inputDim, hiddenDim)
+            v2ProjB = npz.arrays["proj_b"]!!
+            v2ProjLnScale = npz.arrays["proj_ln_scale"]!!
+            v2ProjLnBias = npz.arrays["proj_ln_bias"]!!
 
-        // Value network — two formats:
-        // PPO: separate vf_w0/b0..vf_wN/bN layers + value_w/value_b
-        // AlphaZero: shared body (same fe_w layers) + value_w/value_b only
-        hasValueHead = npz.arrays.containsKey("value_w") && npz.arrays.containsKey("value_b")
-
-        val vfNLayers = npz.arrays["vf_n_layers"]?.firstOrNull()?.toInt() ?: 0
-        if (hasValueHead && vfNLayers > 0) {
-            // PPO model: separate value layers
-            val vfList = mutableListOf<Pair<Array<FloatArray>, FloatArray>>()
-            for (i in 0 until vfNLayers) {
-                val w = npz.arrays["vf_w$i"]!!
-                val b = npz.arrays["vf_b$i"]!!
-                val outputDim = b.size
-                val vfInputDim = if (i == 0) inputDim else vfList[i - 1].second.size
-                vfList.add(Pair(reshape(w, vfInputDim, outputDim), b))
+            // Residual blocks
+            val blocks = mutableListOf<ResBlock>()
+            for (i in 0 until numBlocks) {
+                blocks.add(ResBlock(
+                    w1 = reshape(npz.arrays["res${i}_w1"]!!, hiddenDim, hiddenDim),
+                    b1 = npz.arrays["res${i}_b1"]!!,
+                    ln1Scale = npz.arrays["res${i}_ln1_scale"]!!,
+                    ln1Bias = npz.arrays["res${i}_ln1_bias"]!!,
+                    w2 = reshape(npz.arrays["res${i}_w2"]!!, hiddenDim, hiddenDim),
+                    b2 = npz.arrays["res${i}_b2"]!!,
+                    ln2Scale = npz.arrays["res${i}_ln2_scale"]!!,
+                    ln2Bias = npz.arrays["res${i}_ln2_bias"]!!,
+                ))
             }
-            valueLayers = vfList
-            val vfHiddenSize = valueLayers.last().second.size
-            valueW = reshape(npz.arrays["value_w"]!!, vfHiddenSize, 1)
-            valueB = npz.arrays["value_b"]!!
-        } else if (hasValueHead) {
-            // AlphaZero model: shared body, value head applied to policy body output
-            valueLayers = emptyList()  // empty = use policy layers (shared body)
-            valueW = reshape(npz.arrays["value_w"]!!, lastHiddenSize, 1)
-            valueB = npz.arrays["value_b"]!!
+            v2ResBlocks = blocks
+
+            // Policy head (2-layer)
+            v2PolicyW1 = reshape(npz.arrays["policy_w1"]!!, hiddenDim, 256)
+            v2PolicyB1 = npz.arrays["policy_b1"]!!
+            v2PolicyLnScale = npz.arrays["policy_ln_scale"]!!
+            v2PolicyLnBias = npz.arrays["policy_ln_bias"]!!
+            v2PolicyW2 = reshape(npz.arrays["policy_w2"]!!, 256, 6)
+            v2PolicyB2 = npz.arrays["policy_b2"]!!
+
+            // Value head (2-layer)
+            v2ValueW1 = reshape(npz.arrays["value_w1"]!!, hiddenDim, 256)
+            v2ValueB1 = npz.arrays["value_b1"]!!
+            v2ValueLnScale = npz.arrays["value_ln_scale"]!!
+            v2ValueLnBias = npz.arrays["value_ln_bias"]!!
+            v2ValueW2 = reshape(npz.arrays["value_w2"]!!, 256, 1)
+            v2ValueB2 = npz.arrays["value_b2"]!!
+
+            hasValueHead = true
         } else {
-            valueLayers = emptyList()
-            valueW = arrayOf(floatArrayOf(0f))
-            valueB = floatArrayOf(0f)
+            // V1: plain MLP
+            val nLayers = npz.arrays["n_layers"]!!.first().toInt()
+            activation = npz.strings["activation"] ?: "tanh"
+
+            val layerList = mutableListOf<Pair<Array<FloatArray>, FloatArray>>()
+            for (i in 0 until nLayers) {
+                val w = npz.arrays["fe_w$i"]!!
+                val b = npz.arrays["fe_b$i"]!!
+                val outputDim = b.size
+                val inferredInputDim = if (i == 0) w.size / outputDim else layerList[i - 1].second.size
+                layerList.add(Pair(reshape(w, inferredInputDim, outputDim), b))
+            }
+            v1Layers = layerList
+            inputDim = layerList[0].first.size
+
+            val lastHiddenSize = layerList.last().second.size
+            v1ActionW = reshape(npz.arrays["action_w"]!!, lastHiddenSize, 6)
+            v1ActionB = npz.arrays["action_b"]!!
+
+            hasValueHead = npz.arrays.containsKey("value_w") && npz.arrays.containsKey("value_b")
+
+            val vfNLayers = npz.arrays["vf_n_layers"]?.firstOrNull()?.toInt() ?: 0
+            if (hasValueHead && vfNLayers > 0) {
+                val vfList = mutableListOf<Pair<Array<FloatArray>, FloatArray>>()
+                for (i in 0 until vfNLayers) {
+                    val w = npz.arrays["vf_w$i"]!!
+                    val b = npz.arrays["vf_b$i"]!!
+                    val outputDim = b.size
+                    val vfInputDim = if (i == 0) inputDim else vfList[i - 1].second.size
+                    vfList.add(Pair(reshape(w, vfInputDim, outputDim), b))
+                }
+                v1ValueLayers = vfList
+                val vfHiddenSize = vfList.last().second.size
+                v1ValueW = reshape(npz.arrays["value_w"]!!, vfHiddenSize, 1)
+                v1ValueB = npz.arrays["value_b"]!!
+            } else if (hasValueHead) {
+                v1ValueLayers = emptyList()
+                v1ValueW = reshape(npz.arrays["value_w"]!!, lastHiddenSize, 1)
+                v1ValueB = npz.arrays["value_b"]!!
+            } else {
+                v1ValueLayers = emptyList()
+                v1ValueW = arrayOf(floatArrayOf(0f))
+                v1ValueB = floatArrayOf(0f)
+            }
         }
     }
 
@@ -86,7 +160,6 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
         }
     }
 
-    /** Original policy-only move selection (no search). */
     private fun selectMovePolicy(board: Board, isPlayerOne: Boolean): Int {
         val obs = buildObs(board, isPlayerOne)
         val logits = policyForward(obs)
@@ -102,16 +175,13 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
         return if (isPlayerOne) bestAction else bestAction + 7
     }
 
-    /** Minimax search with neural value evaluation and policy move ordering. */
     private fun selectMoveWithSearch(board: Board, isPlayerOne: Boolean): Int {
         val legalMoves = board.legalMoves(isPlayerOne)
         if (legalMoves.isEmpty()) return 0
 
-        // Get policy logits for move ordering
         val obs = buildObs(board, isPlayerOne)
         val logits = policyForward(obs)
 
-        // Convert to relative actions (0-5) and sort by policy preference
         val relativeActions = if (isPlayerOne) {
             legalMoves.sortedByDescending { logits[it] }
         } else {
@@ -154,7 +224,6 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
             }
         }
 
-        // Move ordering using policy logits
         val obs = buildObs(board, currentPlayer)
         val logits = policyForward(obs)
         val sortedMoves = if (currentPlayer) {
@@ -201,12 +270,10 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
         }
     }
 
-    /** Evaluate a board position using blended neural + heuristic evaluation. */
     private fun evaluateBoard(board: Board, asPlayerOne: Boolean): Float {
         val obs = buildObs(board, asPlayerOne)
         val neuralValue = valueForward(obs)
 
-        // Heuristic: score differential + 0.3 * side stone differential (matches PPO shaping)
         val pockets = board.pockets
         val myMancala = if (asPlayerOne) pockets[Board.PLAYER_ONE_MANCALA] else pockets[Board.PLAYER_TWO_MANCALA]
         val oppMancala = if (asPlayerOne) pockets[Board.PLAYER_TWO_MANCALA] else pockets[Board.PLAYER_ONE_MANCALA]
@@ -217,15 +284,12 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
         return 0.7f * neuralValue + 0.3f * heuristicValue
     }
 
-    /** Evaluate a terminal board (game over, all stones collected). */
     private fun evaluateTerminal(board: Board, asPlayerOne: Boolean): Float {
         val myMancala = if (asPlayerOne) board.pockets[Board.PLAYER_ONE_MANCALA] else board.pockets[Board.PLAYER_TWO_MANCALA]
         val oppMancala = if (asPlayerOne) board.pockets[Board.PLAYER_TWO_MANCALA] else board.pockets[Board.PLAYER_ONE_MANCALA]
-        // Strong signal for terminal states: normalized score difference
         return (myMancala - oppMancala).toFloat() / 48f
     }
 
-    /** Build the observation vector for a given board and player perspective. */
     private fun buildObs(board: Board, isPlayerOne: Boolean): FloatArray {
         val pockets = board.pockets
         val baseObs = if (isPlayerOne) {
@@ -263,32 +327,105 @@ class NeuralNetEngine(private val searchDepth: Int = 5) {
         }
     }
 
-    /** Forward pass through policy network, returns action logits. */
+    // ---- Forward pass dispatching ----
+
     private fun policyForward(input: FloatArray): FloatArray {
+        return if (version >= 2) policyForwardV2(input) else policyForwardV1(input)
+    }
+
+    private fun valueForward(input: FloatArray): Float {
+        return if (version >= 2) valueForwardV2(input) else valueForwardV1(input)
+    }
+
+    // ---- V1 forward passes ----
+
+    private fun policyForwardV1(input: FloatArray): FloatArray {
         var x = input
-        for ((w, b) in layers) {
+        for ((w, b) in v1Layers!!) {
             x = matVecMul(x, w, b)
             x = activate(x)
         }
-        return matVecMul(x, actionW, actionB)
+        return matVecMul(x, v1ActionW!!, v1ActionB!!)
     }
 
-    /** Forward pass through value network, returns scalar value estimate. */
-    private fun valueForward(input: FloatArray): Float {
+    private fun valueForwardV1(input: FloatArray): Float {
         var x = input
-        // If valueLayers is empty, use the shared policy body (AlphaZero architecture)
-        val bodyLayers = if (valueLayers.isEmpty()) layers else valueLayers
+        val bodyLayers = if (v1ValueLayers!!.isEmpty()) v1Layers!! else v1ValueLayers!!
         for ((w, b) in bodyLayers) {
             x = matVecMul(x, w, b)
             x = activate(x)
         }
-        val out = matVecMul(x, valueW, valueB)
+        val out = matVecMul(x, v1ValueW!!, v1ValueB!!)
         return out[0]
     }
 
+    // ---- V2 forward passes (ResNet + LayerNorm) ----
+
+    private fun sharedBodyV2(input: FloatArray): FloatArray {
+        // Input projection
+        var x = matVecMul(input, v2ProjW!!, v2ProjB!!)
+        x = layerNorm(x, v2ProjLnScale!!, v2ProjLnBias!!)
+        x = relu(x)
+
+        // Residual blocks
+        for (block in v2ResBlocks!!) {
+            val residual = x
+            var out = matVecMul(x, block.w1, block.b1)
+            out = layerNorm(out, block.ln1Scale, block.ln1Bias)
+            out = relu(out)
+            out = matVecMul(out, block.w2, block.b2)
+            out = layerNorm(out, block.ln2Scale, block.ln2Bias)
+            // Residual connection
+            for (i in out.indices) out[i] += residual[i]
+            x = relu(out)
+        }
+
+        return x
+    }
+
+    private fun policyForwardV2(input: FloatArray): FloatArray {
+        val shared = sharedBodyV2(input)
+        // Policy head: Linear -> LN -> ReLU -> Linear
+        var p = matVecMul(shared, v2PolicyW1!!, v2PolicyB1!!)
+        p = layerNorm(p, v2PolicyLnScale!!, v2PolicyLnBias!!)
+        p = relu(p)
+        return matVecMul(p, v2PolicyW2!!, v2PolicyB2!!)
+    }
+
+    private fun valueForwardV2(input: FloatArray): Float {
+        val shared = sharedBodyV2(input)
+        // Value head: Linear -> LN -> ReLU -> Linear -> tanh
+        var v = matVecMul(shared, v2ValueW1!!, v2ValueB1!!)
+        v = layerNorm(v, v2ValueLnScale!!, v2ValueLnBias!!)
+        v = relu(v)
+        val out = matVecMul(v, v2ValueW2!!, v2ValueB2!!)
+        return tanh(out[0].toDouble()).toFloat()
+    }
+
+    // ---- Utility functions ----
+
     private fun activate(x: FloatArray): FloatArray = when (activation) {
-        "relu" -> FloatArray(x.size) { max(0f, x[it]) }
+        "relu" -> relu(x)
         else -> FloatArray(x.size) { tanh(x[it].toDouble()).toFloat() }
+    }
+
+    private fun relu(x: FloatArray): FloatArray = FloatArray(x.size) { max(0f, x[it]) }
+
+    private fun layerNorm(x: FloatArray, scale: FloatArray, bias: FloatArray, eps: Float = 1e-5f): FloatArray {
+        val n = x.size
+        var mean = 0f
+        for (v in x) mean += v
+        mean /= n
+
+        var variance = 0f
+        for (v in x) {
+            val diff = v - mean
+            variance += diff * diff
+        }
+        variance /= n
+
+        val invStd = 1f / sqrt(variance + eps)
+        return FloatArray(n) { i -> (x[i] - mean) * invStd * scale[i] + bias[i] }
     }
 
     private fun computeActionFeatures(board: Board, isPlayerOne: Boolean): FloatArray {

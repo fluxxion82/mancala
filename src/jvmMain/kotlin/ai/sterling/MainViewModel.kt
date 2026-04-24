@@ -8,13 +8,14 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainViewModel: ViewModel() {
     private var game: Game = Game.new()
-    private val neuralNetEngine = NeuralNetEngine()
+    private val neuralNetEngine = NeuralNetEngine(searchDepth = 3)
     private val gameLogger = GameLogger()
 
     val stones = mutableStateListOf<Int>().apply {
@@ -55,7 +56,7 @@ class MainViewModel: ViewModel() {
 
     private fun makeComputerMove() {
         if (gameStatus.value == GameStatus.PlayerTwoTurn) {
-            computerMoveJob = viewModelScope.launch {
+            computerMoveJob = viewModelScope.launch(Dispatchers.Default) {
                 delay(2000)
                 while (gameStatus.value == GameStatus.PlayerTwoTurn) {
                     val nextMove = neuralNetEngine.selectMove(game)
