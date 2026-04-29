@@ -9,7 +9,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -35,20 +37,29 @@ fun MancalaGlow(
         label = "pulse",
     )
 
-    Canvas(modifier = modifier) {
-        val radius = max(slot.width, slot.height) * 0.85f
-        drawCircle(
-            brush = Brush.radialGradient(
-                colorStops = arrayOf(
-                    0f to BoardColors.GlowAmber.copy(alpha = 0.0f),
-                    0.55f to BoardColors.GlowAmber.copy(alpha = 0.32f * pulse),
-                    1f to Color.Transparent,
-                ),
-                center = Offset(slot.center.x, slot.center.y),
-                radius = radius,
+    // Cache the radial gradient brush — without this we'd allocate a Brush +
+    // colorStops Array + 3 Pair objects on every animation frame (60fps × the
+    // entire game session). The pulse alpha is applied via Modifier.alpha
+    // outside so the brush itself stays stable.
+    val radius = max(slot.width, slot.height) * 0.85f
+    val center = remember(slot.center) { Offset(slot.center.x, slot.center.y) }
+    val glowBrush = remember(center, radius) {
+        Brush.radialGradient(
+            colorStops = arrayOf(
+                0f to BoardColors.GlowAmber.copy(alpha = 0.0f),
+                0.55f to BoardColors.GlowAmber.copy(alpha = 0.32f),
+                1f to Color.Transparent,
             ),
+            center = center,
             radius = radius,
-            center = Offset(slot.center.x, slot.center.y),
+        )
+    }
+
+    Canvas(modifier = modifier.alpha(pulse)) {
+        drawCircle(
+            brush = glowBrush,
+            radius = radius,
+            center = center,
         )
     }
 }

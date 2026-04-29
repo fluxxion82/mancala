@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -12,6 +13,12 @@ version = "1.0-SNAPSHOT"
 kotlin {
     jvm()
 
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        outputModuleName = "mancala"
+        browser {}
+    }
+
     sourceSets {
         val commonMain by getting {
             dependencies {
@@ -19,8 +26,10 @@ kotlin {
                 implementation(compose.foundation)
                 implementation(compose.material)
                 implementation(compose.materialIconsExtended)
+                implementation(compose.components.resources)
 
                 implementation(libs.kotlinx.coroutines.core)
+                implementation(libs.kotlinx.io.core)
                 implementation(libs.lifecycle.viewmodel)
             }
         }
@@ -44,7 +53,16 @@ kotlin {
                 implementation("org.junit.jupiter:junit-jupiter-params:5.5.2")
             }
         }
+        val wasmJsMain by getting {
+            // No extra deps; wasm-side actuals only need stdlib + browser globals.
+        }
     }
+}
+
+compose.resources {
+    publicResClass = true
+    generateResClass = always
+    packageOfResClass = "ai.sterling.mancala.resources"
 }
 
 compose.desktop {
@@ -56,4 +74,24 @@ compose.desktop {
             packageVersion = "1.0.0"
         }
     }
+}
+
+// Run once after retraining the model to regenerate the cross-platform weight blob:
+//   ./gradlew convertWeights
+// Reads model_source/mancala_weights.npz (the artifact from the Python training run)
+// and writes the flat .bin into commonMain composeResources so it ships to every target.
+val convertWeights by tasks.registering(JavaExec::class) {
+    description = "Convert model_source/mancala_weights.npz → commonMain composeResources/files/mancala_weights.bin"
+    group = "build"
+
+    val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
+    classpath = jvmMainCompilation.output.allOutputs + jvmMainCompilation.runtimeDependencyFiles
+    mainClass.set("ai.sterling.build.WeightsConverterKt")
+    dependsOn(jvmMainCompilation.compileTaskProvider)
+
+    val npzIn = layout.projectDirectory.file("model_source/mancala_weights.npz")
+    val binOut = layout.projectDirectory.file("src/commonMain/composeResources/files/mancala_weights.bin")
+    inputs.file(npzIn)
+    outputs.file(binOut)
+    args(npzIn.asFile.absolutePath, binOut.asFile.absolutePath)
 }

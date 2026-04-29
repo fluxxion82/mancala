@@ -2,6 +2,7 @@ package ai.sterling.ui.board
 
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
+import ai.sterling.ui.theme.LocalBoardScale
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.Text
@@ -15,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
 
 /**
  * Renders the count of stones in a single pit, positioned at the slot's bottom-center
@@ -29,7 +31,9 @@ fun PitCountLabel(
 ) {
     if (count <= 0 && !slot.isMancala) return
 
-    val fontSize: TextUnit = if (slot.isMancala) Dimens.MancalaCountFontSize else Dimens.PitCountFontSize
+    val boardScale = LocalBoardScale.current
+    val baseFontSize: TextUnit = if (slot.isMancala) Dimens.MancalaCountFontSize else Dimens.PitCountFontSize
+    val fontSize: TextUnit = (baseFontSize.value * boardScale).sp
     val color = if (slot.isMancala) BoardColors.Parchment else BoardColors.ParchmentDim
 
     val anchor = if (slot.isMancala) {

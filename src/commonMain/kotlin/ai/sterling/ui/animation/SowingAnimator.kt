@@ -2,6 +2,7 @@ package ai.sterling.ui.animation
 
 import ai.sterling.ui.board.Marble
 import ai.sterling.ui.theme.Dimens
+import ai.sterling.ui.theme.LocalBoardScale
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
@@ -21,8 +22,9 @@ import kotlin.math.sin
 @Composable
 fun SowingAnimator(state: MancalaBoardAnimationState) {
     val density = LocalDensity.current
-    val arcHeightPx = with(density) { Dimens.ArcHeight.toPx() }
-    val marbleRadiusPx = with(density) { Dimens.MarbleRadius.toPx() }
+    val boardScale = LocalBoardScale.current
+    val arcHeightPx = with(density) { Dimens.ArcHeight.toPx() } * boardScale
+    val marbleRadiusPx = with(density) { Dimens.MarbleRadius.toPx() } * boardScale
 
     Box(modifier = Modifier) {
         state.inFlight.forEach { (id, fs) ->

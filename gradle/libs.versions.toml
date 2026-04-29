@@ -1,14 +1,15 @@
 [versions]
 ## SDK Versions
-lifecycleViewmodel = "2.8.4"
+lifecycleViewmodel = "2.10.0"
 
 # Dependencies
-kotlin = "2.3.20"
+kotlin = "2.4.0-Beta2"
 coroutines = "1.10.2"
+kotlinxIoCore = "0.9.0"
 
-compose-bom = "2026.03.00"
+compose-bom = "2026.04.01"
 
-compose-multiplatorm = "1.10.2"
+compose-multiplatorm = "1.10.3"
 
 [libraries]
 kotlin-test-annotations-common = { module = "org.jetbrains.kotlin:kotlin-test-annotations-common" }
@@ -18,6 +19,7 @@ kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinxIoCore" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycleViewmodel" }

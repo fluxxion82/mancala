@@ -6,6 +6,7 @@ import ai.sterling.ui.animation.MancalaBoardAnimationState
 import ai.sterling.ui.animation.SowingAnimator
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
+import ai.sterling.ui.theme.LocalBoardScale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -49,11 +51,28 @@ fun BoardLayout(
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
 
-        val pitPx = with(density) { Dimens.PitDiameter.toPx() }
-        val mancalaWPx = with(density) { Dimens.MancalaWidth.toPx() }
-        val mancalaHPx = with(density) { Dimens.MancalaHeight.toPx() }
-        val paddingPx = with(density) { Dimens.BoardPadding.toPx() }
-        val spacingPx = with(density) { Dimens.PitSpacing.toPx() }
+        val basePitPx = with(density) { Dimens.PitDiameter.toPx() }
+        val baseMancalaWPx = with(density) { Dimens.MancalaWidth.toPx() }
+        val baseMancalaHPx = with(density) { Dimens.MancalaHeight.toPx() }
+        val basePaddingPx = with(density) { Dimens.BoardPadding.toPx() }
+        val baseSpacingPx = with(density) { Dimens.PitSpacing.toPx() }
+
+        // Natural (unscaled) board footprint — used to compute a uniform scale that
+        // shrinks the board to fit narrow hosts like an in-page embed.
+        val naturalWidthPx = basePaddingPx * 2 + baseMancalaWPx * 2 +
+            baseSpacingPx * 4 + basePitPx * 6 + baseSpacingPx * 5
+        val naturalHeightPx = basePaddingPx * 2 + baseMancalaHPx
+        val scale = minOf(
+            if (naturalWidthPx > 0f) widthPx / naturalWidthPx else 1f,
+            if (naturalHeightPx > 0f) heightPx / naturalHeightPx else 1f,
+            1f,
+        ).coerceAtLeast(0.1f)
+
+        val pitPx = basePitPx * scale
+        val mancalaWPx = baseMancalaWPx * scale
+        val mancalaHPx = baseMancalaHPx * scale
+        val paddingPx = basePaddingPx * scale
+        val spacingPx = baseSpacingPx * scale
 
         val slots = remember(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx, humanSide) {
             computePitSlots(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx, humanSide)
@@ -68,6 +87,7 @@ fun BoardLayout(
             }
         }
 
+        CompositionLocalProvider(LocalBoardScale provides scale) {
         Box(modifier = Modifier.matchParentSize()) {
             WoodenSurface(slots = slots, modifier = Modifier.matchParentSize())
 
@@ -127,6 +147,7 @@ fun BoardLayout(
 
             // Layer 3: in-flight stones overlay.
             SowingAnimator(state = animationState)
+        }
         }
     }
 }

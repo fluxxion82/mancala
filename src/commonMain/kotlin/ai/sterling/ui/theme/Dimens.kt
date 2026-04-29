@@ -1,5 +1,6 @@
 package ai.sterling.ui.theme
 
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -23,3 +24,11 @@ object Dimens {
     val MancalaCountFontSize = 32.sp
     val CountLabelInset = 6.dp
 }
+
+/**
+ * Multiplicative scale applied to every absolute board dimension so the layout
+ * can shrink to fit a constrained host (e.g. an embed inside a 800dp-wide blog).
+ * BoardLayout computes this from its BoxWithConstraints and provides it; child
+ * components that aren't given pre-scaled values read it directly.
+ */
+val LocalBoardScale = compositionLocalOf { 1f }
