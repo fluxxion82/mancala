@@ -1,6 +1,7 @@
 package ai.sterling.ui.board
 
 import ai.sterling.model.Game
+import ai.sterling.model.HumanSide
 import ai.sterling.ui.theme.BoardColors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -20,9 +21,10 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun TurnIndicator(
     status: Game.GameStatus,
+    humanSide: HumanSide?,
     modifier: Modifier = Modifier,
 ) {
-    val (label, accent) = labelFor(status)
+    val (label, accent) = labelFor(status, humanSide)
 
     Box(
         modifier = modifier
@@ -48,10 +50,24 @@ fun TurnIndicator(
     }
 }
 
-private fun labelFor(status: Game.GameStatus): Pair<String, Color> = when (status) {
-    Game.GameStatus.PlayerOneTurn -> "Your turn" to BoardColors.GlowAmber
-    Game.GameStatus.PlayerTwoTurn -> "Computer thinking…" to Color(0xFFB87333)
-    Game.GameStatus.Finished.PlayerOneWin -> "You win!" to BoardColors.GlowAmber
-    Game.GameStatus.Finished.PlayerTwoWin -> "Computer wins" to Color(0xFFEF476F)
-    Game.GameStatus.Finished.Draw -> "Draw" to BoardColors.ParchmentDim
+private val YourTurn = "Your turn" to BoardColors.GlowAmber
+private val ComputerTurn = "Computer thinking…" to Color(0xFFB87333)
+private val YouWin = "You win!" to BoardColors.GlowAmber
+private val ComputerWins = "Computer wins" to Color(0xFFEF476F)
+
+private val ChooseSide = "Choose your side to begin" to BoardColors.GlowAmber
+
+private fun labelFor(status: Game.GameStatus, humanSide: HumanSide?): Pair<String, Color> {
+    if (humanSide == null) return ChooseSide
+    return when (status) {
+        Game.GameStatus.PlayerOneTurn ->
+            if (humanSide == HumanSide.PLAYER_ONE) YourTurn else ComputerTurn
+        Game.GameStatus.PlayerTwoTurn ->
+            if (humanSide == HumanSide.PLAYER_TWO) YourTurn else ComputerTurn
+        Game.GameStatus.Finished.PlayerOneWin ->
+            if (humanSide == HumanSide.PLAYER_ONE) YouWin else ComputerWins
+        Game.GameStatus.Finished.PlayerTwoWin ->
+            if (humanSide == HumanSide.PLAYER_TWO) YouWin else ComputerWins
+        Game.GameStatus.Finished.Draw -> "Draw" to BoardColors.ParchmentDim
+    }
 }

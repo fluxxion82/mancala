@@ -2,6 +2,8 @@ package ai.sterling.ui.animation
 
 import ai.sterling.model.Board
 import ai.sterling.model.Game
+import ai.sterling.model.HumanSide
+import ai.sterling.model.isHumansTurn
 import ai.sterling.ui.theme.Dimens
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -39,6 +41,8 @@ class MancalaController(
     val hoveredPit = mutableStateOf<Int?>(null)
 
     private val activeAnimationJobs = mutableSetOf<Job>()
+    private var aiTriggerJob: Job? = null
+    private var eventLoopScope: CoroutineScope? = null
 
     init {
         seedVisualStones()
@@ -58,9 +62,13 @@ class MancalaController(
     fun onPitClick(index: Int) {
         if (inputLocked.value) return
         val status = viewModel.currentGameStatus()
-        val onCorrectSide = (status == Game.GameStatus.PlayerOneTurn && index in 0..5) ||
-            (status == Game.GameStatus.PlayerTwoTurn && index in 7..12)
-        if (!onCorrectSide) return
+        val human = viewModel.currentHumanSide() ?: return  // no game in progress yet
+        if (!status.isHumansTurn(human)) return
+        val onHumansSide = when (human) {
+            HumanSide.PLAYER_ONE -> index in 0..5
+            HumanSide.PLAYER_TWO -> index in 7..12
+        }
+        if (!onHumansSide) return
         if (viewModel.currentPockets()[index] == 0) return
         viewModel.applyMove(index)
     }
@@ -76,13 +84,18 @@ class MancalaController(
         if (inputLocked.value) return false
         if (index == Board.PLAYER_ONE_MANCALA || index == Board.PLAYER_TWO_MANCALA) return false
         val status = viewModel.currentGameStatus()
-        val onCorrectSide = (status == Game.GameStatus.PlayerOneTurn && index in 0..5) ||
-            (status == Game.GameStatus.PlayerTwoTurn && index in 7..12)
-        if (!onCorrectSide) return false
+        val human = viewModel.currentHumanSide() ?: return false  // no game in progress yet
+        if (!status.isHumansTurn(human)) return false
+        val onHumansSide = when (human) {
+            HumanSide.PLAYER_ONE -> index in 0..5
+            HumanSide.PLAYER_TWO -> index in 7..12
+        }
+        if (!onHumansSide) return false
         return viewModel.currentPockets()[index] > 0
     }
 
     suspend fun runEventLoop(scope: CoroutineScope) {
+        eventLoopScope = scope
         // Wait for first layout pass so all 14 pit centers are populated.
         snapshotFlow { pitCenters.size == Board.TOTAL_POCKETS }.first { it }
 
@@ -98,6 +111,37 @@ class MancalaController(
         stopAnimations()
         seedVisualStones()
         inputLocked.value = false
+
+        // If a game is in progress and starts on the AI's turn (human picked
+        // Player 2), kick off the first AI move now — Reset emits no MoveApplied
+        // event so the trigger in animateMove() never fires for the opening move.
+        // If no side has been chosen yet (humanSide == null), do nothing.
+        val human = viewModel.currentHumanSide() ?: return
+        val status = viewModel.currentGameStatus()
+        if (status !is Game.GameStatus.Finished && !status.isHumansTurn(human)) {
+            triggerAiMove()
+        }
+    }
+
+    private fun triggerAiMove() {
+        val scope = eventLoopScope ?: return
+        aiTriggerJob?.cancel()
+        aiTriggerJob = scope.launch {
+            delay(Dimens.ThinkDelayMs)
+            // Re-check after the delay — a Reset (or game completion) may have
+            // intervened, in which case we must not apply a stale move.
+            val status = viewModel.currentGameStatus()
+            val human = viewModel.currentHumanSide() ?: return@launch
+            if (status is Game.GameStatus.Finished) return@launch
+            if (status.isHumansTurn(human)) return@launch
+            val ai = viewModel.computeAiMove()
+            // computeAiMove may suspend; re-verify after it returns too.
+            val statusAfter = viewModel.currentGameStatus()
+            val humanAfter = viewModel.currentHumanSide() ?: return@launch
+            if (statusAfter is Game.GameStatus.Finished) return@launch
+            if (statusAfter.isHumansTurn(humanAfter)) return@launch
+            viewModel.applyMove(ai)
+        }
     }
 
     private suspend fun animateMove(scope: CoroutineScope, event: MoveEvent.MoveApplied) {
@@ -141,10 +185,9 @@ class MancalaController(
         snapStonesToBoard(event.boardAfter.pockets)
         inputLocked.value = false
 
-        if (event.statusAfter == Game.GameStatus.PlayerTwoTurn) {
-            delay(Dimens.ThinkDelayMs)
-            val ai = viewModel.computeAiMove()
-            viewModel.applyMove(ai)
+        if (event.statusAfter !is Game.GameStatus.Finished &&
+            !event.statusAfter.isHumansTurn(viewModel.currentHumanSide())) {
+            triggerAiMove()
         }
     }
 
@@ -206,6 +249,8 @@ class MancalaController(
     private fun stopAnimations() {
         activeAnimationJobs.toList().forEach { it.cancel() }
         activeAnimationJobs.clear()
+        aiTriggerJob?.cancel()
+        aiTriggerJob = null
         inFlight.clear()
     }
 
@@ -242,6 +287,8 @@ interface MancalaControllerHost {
     fun events(): kotlinx.coroutines.flow.SharedFlow<MoveEvent>
     fun currentGameStatus(): Game.GameStatus
     fun currentPockets(): List<Int>
+    /** Null means no game is in progress — the user has not picked a side yet. */
+    fun currentHumanSide(): HumanSide?
     fun applyMove(position: Int)
     suspend fun computeAiMove(): Int
 }

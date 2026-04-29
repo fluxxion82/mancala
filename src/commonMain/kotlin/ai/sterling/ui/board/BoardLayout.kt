@@ -1,5 +1,7 @@
 package ai.sterling.ui.board
 
+import ai.sterling.model.Board
+import ai.sterling.model.HumanSide
 import ai.sterling.ui.animation.MancalaController
 import ai.sterling.ui.animation.SowingAnimator
 import ai.sterling.ui.theme.BoardColors
@@ -33,6 +35,7 @@ fun BoardLayout(
     controller: MancalaController,
     onPitClick: (Int) -> Unit,
     activeMancala: Int?,
+    humanSide: HumanSide?,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -48,8 +51,8 @@ fun BoardLayout(
         val paddingPx = with(density) { Dimens.BoardPadding.toPx() }
         val spacingPx = with(density) { Dimens.PitSpacing.toPx() }
 
-        val slots = remember(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx) {
-            computePitSlots(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx)
+        val slots = remember(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx, humanSide) {
+            computePitSlots(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx, humanSide)
         }
 
         // Push computed centers/bounds into the controller. This is the analogue of
@@ -162,6 +165,7 @@ private fun computePitSlots(
     mancalaHPx: Float,
     paddingPx: Float,
     spacingPx: Float,
+    humanSide: HumanSide?,
 ): List<PitSlot> {
     val pitsRowWidth = pitPx * 6 + spacingPx * 5
     val naturalBoardWidth = paddingPx * 2 + mancalaWPx * 2 + spacingPx * 4 + pitsRowWidth
@@ -183,14 +187,24 @@ private fun computePitSlots(
     val pitsTopY = originY + gap + pitPx / 2f
     val pitsBottomY = pitsTopY + pitPx + spacingPx
 
+    // When the human plays as Player 2, flip the board so their pits are on the
+    // bottom (the side closest to the player). The animation system and click
+    // gating are already keyed on absolute pocket index, so this is a pure
+    // layout-time relabel — no other code needs to change.
+    val flipped = humanSide == HumanSide.PLAYER_TWO
+    val leftMancalaIndex = if (flipped) Board.PLAYER_ONE_MANCALA else Board.PLAYER_TWO_MANCALA
+    val rightMancalaIndex = if (flipped) Board.PLAYER_TWO_MANCALA else Board.PLAYER_ONE_MANCALA
+
     return buildList {
-        add(PitSlot(13, leftMancalaCenter, mancalaWPx, mancalaHPx))
+        add(PitSlot(leftMancalaIndex, leftMancalaCenter, mancalaWPx, mancalaHPx))
         for (col in 0 until 6) {
             val cx = pitsStartX + col * (pitPx + spacingPx)
-            add(PitSlot(12 - col, Offset(cx, pitsTopY), pitPx, pitPx))
-            add(PitSlot(col, Offset(cx, pitsBottomY), pitPx, pitPx))
+            val topIndex = if (flipped) (5 - col) else (12 - col)
+            val bottomIndex = if (flipped) (7 + col) else col
+            add(PitSlot(topIndex, Offset(cx, pitsTopY), pitPx, pitPx))
+            add(PitSlot(bottomIndex, Offset(cx, pitsBottomY), pitPx, pitPx))
         }
-        add(PitSlot(6, rightMancalaCenter, mancalaWPx, mancalaHPx))
+        add(PitSlot(rightMancalaIndex, rightMancalaCenter, mancalaWPx, mancalaHPx))
     }
 }
 

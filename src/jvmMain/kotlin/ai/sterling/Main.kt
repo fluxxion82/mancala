@@ -1,6 +1,7 @@
 import ai.sterling.MainViewModel
 import ai.sterling.model.Board
 import ai.sterling.model.Game
+import ai.sterling.model.HumanSide
 import ai.sterling.ui.animation.MancalaController
 import ai.sterling.ui.animation.MancalaControllerHost
 import ai.sterling.ui.animation.MoveEvent
@@ -11,6 +12,7 @@ import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -39,6 +41,7 @@ private class ViewModelHost(private val vm: MainViewModel) : MancalaControllerHo
     override fun events(): SharedFlow<MoveEvent> = vm.events
     override fun currentGameStatus(): Game.GameStatus = vm.game.value.status
     override fun currentPockets(): List<Int> = vm.game.value.board.pockets
+    override fun currentHumanSide(): HumanSide? = vm.humanSide.value
     override fun applyMove(position: Int) = vm.applyMove(position)
     override suspend fun computeAiMove(): Int = vm.computeAiMove()
 }
@@ -52,6 +55,7 @@ fun AppScreen(
     val controller = remember(host) { MancalaController(host) }
     val scope = rememberCoroutineScope()
     val gameStatus by mainViewModel.gameStatus.collectAsState()
+    val humanSide by mainViewModel.humanSide.collectAsState()
 
     LaunchedEffect(controller) {
         controller.runEventLoop(scope)
@@ -71,6 +75,7 @@ fun AppScreen(
             controller = controller,
             onPitClick = controller::onPitClick,
             activeMancala = activeMancala,
+            humanSide = humanSide,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -79,27 +84,44 @@ fun AppScreen(
 
         TurnIndicator(
             status = gameStatus,
+            humanSide = humanSide,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
 
-        Button(
+        Row(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .padding(bottom = 20.dp),
-            onClick = mainViewModel::restart,
-            shape = RoundedCornerShape(50),
-            colors = ButtonDefaults.buttonColors(
-                backgroundColor = BoardColors.WoodLight,
-                contentColor = BoardColors.Parchment,
-            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "New Game",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            NewGameButton(
+                text = "New Game — You First",
+                onClick = { mainViewModel.restart(HumanSide.PLAYER_ONE) },
+            )
+            NewGameButton(
+                text = "New Game — AI First",
+                onClick = { mainViewModel.restart(HumanSide.PLAYER_TWO) },
             )
         }
+    }
+}
+
+@Composable
+private fun NewGameButton(text: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = BoardColors.WoodLight,
+            contentColor = BoardColors.Parchment,
+        ),
+    ) {
+        Text(
+            text = text,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 

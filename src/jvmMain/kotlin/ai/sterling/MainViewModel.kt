@@ -3,6 +3,7 @@ package ai.sterling
 import ai.sterling.engine.ml.NeuralNetEngine
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
+import ai.sterling.model.HumanSide
 import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.util.GameLogger
 import androidx.lifecycle.ViewModel
@@ -39,9 +40,10 @@ class MainViewModel : ViewModel() {
     private val _events = MutableSharedFlow<MoveEvent>(extraBufferCapacity = 16)
     val events: SharedFlow<MoveEvent> = _events.asSharedFlow()
 
-    init {
-        gameLogger.startGame(humanIsPlayerOne = true)
-    }
+    // null means "no game in progress yet" — the user must pick a side via restart()
+    // before any moves can be played.
+    private val _humanSide = MutableStateFlow<HumanSide?>(null)
+    val humanSide: StateFlow<HumanSide?> = _humanSide.asStateFlow()
 
     fun applyMove(position: Int) {
         val before = _game.value
@@ -78,9 +80,12 @@ class MainViewModel : ViewModel() {
         neuralNetEngine.selectMove(_game.value)
     }
 
-    fun restart() {
+    fun restart(humanSide: HumanSide) {
+        // Update humanSide BEFORE the game so any host snapshot read between
+        // these operations sees a consistent (humanSide, game) pair.
+        _humanSide.value = humanSide
         _game.value = Game.new()
-        gameLogger.startGame(humanIsPlayerOne = true)
+        gameLogger.startGame(humanIsPlayerOne = humanSide == HumanSide.PLAYER_ONE)
         viewModelScope.launch { _events.emit(MoveEvent.Reset) }
     }
 }

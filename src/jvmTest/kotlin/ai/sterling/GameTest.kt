@@ -2,9 +2,24 @@ package ai.sterling
 
 import ai.sterling.model.Game
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class GameTest {
+
+    @Test
+    fun newGameAlwaysStartsOnPlayerOneTurn_regardlessOfHumanSideChoice() {
+        // The engine has no concept of "human" — Mancala rules say P1 moves first.
+        // This test locks in that Game.new() is unaffected by which side the human
+        // is assigned to (which lives in the ViewModel layer).
+        val game = Game.new()
+        assertEquals(Game.GameStatus.PlayerOneTurn, game.status)
+
+        // First move from P1's side stays valid regardless of who plays it.
+        val after = game.makeMove(0)
+        assertTrue(after.status != Game.GameStatus.PlayerOneTurn || after.board.pockets[0] == 0)
+    }
+
 
     @Test
     fun simpleTurn() {
