@@ -3,116 +3,84 @@ package ai.sterling
 import ai.sterling.engine.ml.NeuralNetEngine
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
+import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.util.GameLogger
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class MainViewModel: ViewModel() {
-    private var game: Game = Game.new()
+class MainViewModel : ViewModel() {
+
     private val neuralNetEngine = NeuralNetEngine(searchDepth = 3)
     private val gameLogger = GameLogger()
 
-    val stones = mutableStateListOf<Int>().apply {
-        addAll(game.board.pockets)
-    }
-    val gameStatus = mutableStateOf<GameStatus>(GameStatus.PlayerOneTurn)
-    private var computerMoveJob: Job? = null
+    private val _game = MutableStateFlow(Game.new())
+    val game: StateFlow<Game> = _game.asStateFlow()
+
+    val gameStatus: StateFlow<GameStatus> = _game
+        .map { it.status }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = GameStatus.PlayerOneTurn,
+        )
+
+    private val _events = MutableSharedFlow<MoveEvent>(extraBufferCapacity = 16)
+    val events: SharedFlow<MoveEvent> = _events.asSharedFlow()
 
     init {
         gameLogger.startGame(humanIsPlayerOne = true)
     }
 
-    fun onMoveInput(position: Int) {
-        if (gameStatus.value is GameStatus.Finished) {
+    fun applyMove(position: Int) {
+        val before = _game.value
+        if (before.status is GameStatus.Finished) return
+
+        val isP1 = before.status == GameStatus.PlayerOneTurn
+        val newGame = try {
+            before.makeMove(position)
+        } catch (e: IllegalArgumentException) {
+            println("Invalid move at $position: ${e.message}")
             return
         }
 
+        _game.value = newGame
+        gameLogger.recordMove(position, isP1)
+        if (newGame.status is GameStatus.Finished) {
+            gameLogger.endGame(newGame.status)
+        }
+
         viewModelScope.launch {
-            try {
-                val wasPlayerOne = gameStatus.value == GameStatus.PlayerOneTurn
-                game = game.makeMove(position)
-                gameLogger.recordMove(position, wasPlayerOne)
-                updateGameState()
-
-                printGameState(position, "Player")
-
-                if (gameStatus.value is GameStatus.Finished) {
-                    gameLogger.endGame(gameStatus.value)
-                } else {
-                    makeComputerMove()
-                }
-            } catch (e: IllegalArgumentException) {
-                // Handle invalid move
-                println("Invalid move: ${e.message}")
-            }
+            _events.emit(
+                MoveEvent.MoveApplied(
+                    boardBeforePockets = before.board.pockets,
+                    position = position,
+                    isPlayerOne = isP1,
+                    boardAfter = newGame.board,
+                    statusAfter = newGame.status,
+                ),
+            )
         }
     }
 
-    private fun makeComputerMove() {
-        if (gameStatus.value == GameStatus.PlayerTwoTurn) {
-            computerMoveJob = viewModelScope.launch(Dispatchers.Default) {
-                delay(2000)
-                while (gameStatus.value == GameStatus.PlayerTwoTurn) {
-                    val nextMove = neuralNetEngine.selectMove(game)
-
-                    try {
-                        val wasPlayerOne = gameStatus.value == GameStatus.PlayerOneTurn
-                        game = game.makeMove(nextMove)
-                        gameLogger.recordMove(nextMove, wasPlayerOne)
-                        updateGameState()
-                        printGameState(nextMove, "Computer")
-
-                        if (gameStatus.value is GameStatus.Finished) {
-                            gameLogger.endGame(gameStatus.value)
-                        }
-                    } catch (e: IllegalArgumentException) {
-                        println("Invalid computer move: ${e.message}")
-                        break
-                    }
-                }
-            }
-        }
+    suspend fun computeAiMove(): Int = withContext(Dispatchers.Default) {
+        neuralNetEngine.selectMove(_game.value)
     }
 
-    private fun updateGameState() {
-        gameStatus.value = game.status
-        stones.clear()
-        stones.addAll(game.board.pockets)
-    }
-
-    private fun printGameState(move: Int, player: String) {
-        println("$player move: $move")
-        println("Game status: ${gameStatus.value}")
-        printBoard()
-
-        when (gameStatus.value) {
-            is GameStatus.Finished.Draw -> println("Game ended in a draw")
-            is GameStatus.Finished.PlayerOneWin -> println("Player One wins!")
-            is GameStatus.Finished.PlayerTwoWin -> println("Player Two wins!")
-            else -> println()
-        }
-    }
-
-    private fun printBoard() {
-        val board = stones
-        println("""
-            ${board[12]} | ${board[11]} | ${board[10]} | ${board[9]} | ${board[8]} | ${board[7]}
-         ${board[13]}                       ${board[6]}
-            ${board[0]} | ${board[1]} | ${board[2]} | ${board[3]} | ${board[4]} | ${board[5]}
-        """.trimIndent())
-    }
-
-    fun onRestartClick() {
-        computerMoveJob?.cancel()
-        game = Game.new()
-        updateGameState()
-        printBoard()
+    fun restart() {
+        _game.value = Game.new()
         gameLogger.startGame(humanIsPlayerOne = true)
+        viewModelScope.launch { _events.emit(MoveEvent.Reset) }
     }
 }
