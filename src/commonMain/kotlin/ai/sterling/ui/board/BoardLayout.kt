@@ -2,7 +2,7 @@ package ai.sterling.ui.board
 
 import ai.sterling.model.Board
 import ai.sterling.model.HumanSide
-import ai.sterling.ui.animation.MancalaController
+import ai.sterling.ui.animation.MancalaBoardAnimationState
 import ai.sterling.ui.animation.SowingAnimator
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
@@ -32,12 +32,16 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun BoardLayout(
-    controller: MancalaController,
+    animationState: MancalaBoardAnimationState,
     onPitClick: (Int) -> Unit,
+    isLegalMove: (Int) -> Boolean,
     activeMancala: Int?,
     humanSide: HumanSide?,
     modifier: Modifier = Modifier,
 ) {
+    fun isClickablePit(index: Int): Boolean =
+        isLegalMove(index) && !animationState.isAnimating
+
     BoxWithConstraints(
         modifier = modifier.background(BoardColors.TableFelt),
     ) {
@@ -55,12 +59,12 @@ fun BoardLayout(
             computePitSlots(widthPx, heightPx, pitPx, mancalaWPx, mancalaHPx, paddingPx, spacingPx, humanSide)
         }
 
-        // Push computed centers/bounds into the controller. This is the analogue of
+        // Push computed centers/bounds into the animation state. This is the analogue of
         // onGloballyPositioned, but cheaper because we know the layout arithmetic.
         LaunchedEffect(slots) {
             for (slot in slots) {
-                controller.pitCenters[slot.index] = slot.center
-                controller.pitBounds[slot.index] = slot.rect
+                animationState.pitCenters[slot.index] = slot.center
+                animationState.pitBounds[slot.index] = slot.rect
             }
         }
 
@@ -76,13 +80,13 @@ fun BoardLayout(
 
             // Layer 2: stones at rest, one cluster per pit. Stones currently in flight are
             // hidden here and rendered by SowingAnimator on the top overlay.
-            val hidden = controller.inFlight.keys
+            val hidden = animationState.inFlight.keys
             for (slot in slots) {
                 val pitRadiusDp = with(density) { (slot.width / 2f).toDp() }
-                val stones = controller.visualStones.filter { it.pit == slot.index }
+                val stones = animationState.visualStones.filter { it.pit == slot.index }
                 val isHoveredAndClickable = !slot.isMancala &&
-                    controller.hoveredPit.value == slot.index &&
-                    controller.isClickablePit(slot.index)
+                    animationState.hoveredPit.value == slot.index &&
+                    isClickablePit(slot.index)
                 val liftTarget = if (isHoveredAndClickable) -with(density) { 8.dp.toPx() } else 0f
                 val liftPx by animateFloatAsState(
                     targetValue = liftTarget,
@@ -102,7 +106,7 @@ fun BoardLayout(
             // Layer 2.5: count labels (above marbles for legibility).
             for (slot in slots) {
                 PitCountLabel(
-                    count = controller.visibleCount(slot.index),
+                    count = animationState.visibleCount(slot.index),
                     slot = slot,
                 )
             }
@@ -112,17 +116,17 @@ fun BoardLayout(
                 if (slot.isMancala) continue
                 ClickableHitArea(
                     rect = slot.rect,
-                    isClickable = controller.isClickablePit(slot.index),
+                    isClickable = isClickablePit(slot.index),
                     onHoverChange = { hovered ->
-                        if (hovered) controller.hoveredPit.value = slot.index
-                        else if (controller.hoveredPit.value == slot.index) controller.hoveredPit.value = null
+                        if (hovered) animationState.hoveredPit.value = slot.index
+                        else if (animationState.hoveredPit.value == slot.index) animationState.hoveredPit.value = null
                     },
                     onClick = { onPitClick(slot.index) },
                 )
             }
 
             // Layer 3: in-flight stones overlay.
-            SowingAnimator(controller = controller)
+            SowingAnimator(state = animationState)
         }
     }
 }

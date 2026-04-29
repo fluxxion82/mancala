@@ -16,16 +16,16 @@ import kotlin.math.sin
 
 /**
  * Top overlay layer rendering each in-flight stone at an absolute root-coordinate offset.
- * Pure renderer — all state lives in [MancalaController.inFlight].
+ * Pure renderer — all state lives in [MancalaBoardAnimationState.inFlight].
  */
 @Composable
-fun SowingAnimator(controller: MancalaController) {
+fun SowingAnimator(state: MancalaBoardAnimationState) {
     val density = LocalDensity.current
     val arcHeightPx = with(density) { Dimens.ArcHeight.toPx() }
     val marbleRadiusPx = with(density) { Dimens.MarbleRadius.toPx() }
 
     Box(modifier = Modifier) {
-        controller.inFlight.forEach { (id, fs) ->
+        state.inFlight.forEach { (id, fs) ->
             key(id) {
                 val t = fs.tAnim.value
                 val pos = lerp(fs.from, fs.to, t) + Offset(0f, -sin(PI * t).toFloat() * arcHeightPx)

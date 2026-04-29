@@ -1,13 +1,14 @@
-import ai.sterling.MainViewModel
+import ai.sterling.data.InMemoryGameRepository
 import ai.sterling.model.Board
 import ai.sterling.model.Game
 import ai.sterling.model.HumanSide
-import ai.sterling.ui.animation.MancalaController
-import ai.sterling.ui.animation.MancalaControllerHost
+import ai.sterling.ui.animation.MancalaBoardAnimationState
 import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.ui.board.BoardLayout
 import ai.sterling.ui.board.TurnIndicator
 import ai.sterling.ui.theme.BoardColors
+import ai.sterling.ui.theme.Dimens
+import ai.sterling.viewmodel.MancalaBoardViewModel
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -24,8 +25,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -35,33 +38,47 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
-import kotlinx.coroutines.flow.SharedFlow
-
-private class ViewModelHost(private val vm: MainViewModel) : MancalaControllerHost {
-    override fun events(): SharedFlow<MoveEvent> = vm.events
-    override fun currentGameStatus(): Game.GameStatus = vm.game.value.status
-    override fun currentPockets(): List<Int> = vm.game.value.board.pockets
-    override fun currentHumanSide(): HumanSide? = vm.humanSide.value
-    override fun applyMove(position: Int) = vm.applyMove(position)
-    override suspend fun computeAiMove(): Int = vm.computeAiMove()
-}
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 @Composable
 @Preview
 fun AppScreen(
-    mainViewModel: MainViewModel,
+    viewModel: MancalaBoardViewModel,
 ) {
-    val host = remember(mainViewModel) { ViewModelHost(mainViewModel) }
-    val controller = remember(host) { MancalaController(host) }
-    val scope = rememberCoroutineScope()
-    val gameStatus by mainViewModel.gameStatus.collectAsState()
-    val humanSide by mainViewModel.humanSide.collectAsState()
+    val animationState = remember { MancalaBoardAnimationState() }
+    val humanSide by viewModel.humanSide.collectAsState()
 
-    LaunchedEffect(controller) {
-        controller.runEventLoop(scope)
+    // Glow follows what's *visible* on the board, not the live game truth — so the
+    // mancala glow stays put during a player's animation and only flips once the
+    // animation finishes. During the AI think-delay it sits on the AI's mancala
+    // (the side that's about to move), which reads as "AI is thinking."
+    var displayedStatus by remember { mutableStateOf<Game.GameStatus>(Game.GameStatus.PlayerOneTurn) }
+
+    LaunchedEffect(viewModel, animationState) {
+        // Wait for first layout pass so all 14 pit centers are populated.
+        snapshotFlow { animationState.pitCenters.size == Board.TOTAL_POCKETS }.first { it }
+
+        viewModel.events.collect { event ->
+            when (event) {
+                MoveEvent.Reset -> {
+                    animationState.handleReset()
+                    displayedStatus = Game.GameStatus.PlayerOneTurn
+                }
+                is MoveEvent.MoveApplied -> {
+                    val side = viewModel.humanSide.value
+                    val isAiMove = side != null &&
+                        ((event.isPlayerOne && side == HumanSide.PLAYER_TWO) ||
+                            (!event.isPlayerOne && side == HumanSide.PLAYER_ONE))
+                    if (isAiMove) delay(Dimens.ThinkDelayMs)
+                    animationState.playMove(event)
+                    displayedStatus = event.statusAfter
+                }
+            }
+        }
     }
 
-    val activeMancala = when (gameStatus) {
+    val activeMancala = when (displayedStatus) {
         Game.GameStatus.PlayerOneTurn -> Board.PLAYER_ONE_MANCALA
         Game.GameStatus.PlayerTwoTurn -> Board.PLAYER_TWO_MANCALA
         else -> null
@@ -72,8 +89,9 @@ fun AppScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         BoardLayout(
-            controller = controller,
-            onPitClick = controller::onPitClick,
+            animationState = animationState,
+            onPitClick = viewModel::onPitClick,
+            isLegalMove = viewModel::isLegalMove,
             activeMancala = activeMancala,
             humanSide = humanSide,
             modifier = Modifier
@@ -83,7 +101,7 @@ fun AppScreen(
         )
 
         TurnIndicator(
-            status = gameStatus,
+            status = displayedStatus,
             humanSide = humanSide,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
@@ -96,11 +114,11 @@ fun AppScreen(
         ) {
             NewGameButton(
                 text = "New Game — You First",
-                onClick = { mainViewModel.restart(HumanSide.PLAYER_ONE) },
+                onClick = { viewModel.restart(HumanSide.PLAYER_ONE) },
             )
             NewGameButton(
                 text = "New Game — AI First",
-                onClick = { mainViewModel.restart(HumanSide.PLAYER_TWO) },
+                onClick = { viewModel.restart(HumanSide.PLAYER_TWO) },
             )
         }
     }
@@ -126,13 +144,15 @@ private fun NewGameButton(text: String, onClick: () -> Unit) {
 }
 
 fun main() = application {
-    val mainViewModel = remember { MainViewModel() }
+    val viewModel = remember {
+        MancalaBoardViewModel(InMemoryGameRepository())
+    }
 
     Window(
         onCloseRequest = ::exitApplication,
         state = WindowState(size = DpSize(900.dp, 900.dp)),
         title = "Mancala",
     ) {
-        AppScreen(mainViewModel)
+        AppScreen(viewModel)
     }
 }
