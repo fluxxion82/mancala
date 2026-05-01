@@ -2,8 +2,10 @@ package ai.sterling
 
 import ai.sterling.data.InMemoryGameRepository
 import ai.sterling.engine.AiBackend
-import ai.sterling.engine.ml.NeuralNetEngine
-import ai.sterling.mancala.resources.Res
+import ai.sterling.loading.MANCALA_WEIGHTS_VERSION
+import ai.sterling.loading.MancalaLoadingScreen
+import ai.sterling.loading.WeightLoadingState
+import ai.sterling.loading.fetchWeightBytes
 import ai.sterling.model.Board
 import ai.sterling.model.Game
 import ai.sterling.model.HumanSide
@@ -17,7 +19,6 @@ import ai.sterling.util.MancalaDebug
 import ai.sterling.viewmodel.MancalaBoardViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,10 +42,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 /**
  * Public root composable for the game. Embed this from anywhere on a host project.
@@ -64,21 +67,22 @@ fun MancalaGame(
     aiMode: AiMode = AiMode.AlphaBeta(),
 ) {
     var backend by remember { mutableStateOf<AiBackend?>(null) }
-    LaunchedEffect(Unit) {
-        backend = MancalaWeightsCache.loadBackend()
+    val loadingState by MancalaWeightsCache.state.collectAsState()
+    var retryNonce by remember { mutableStateOf(0) }
+    LaunchedEffect(retryNonce) {
+        backend = try {
+            MancalaWeightsCache.loadBackend()
+        } catch (t: Throwable) {
+            null
+        }
     }
     val ai = backend
     if (ai == null) {
-        Box(
-            modifier = modifier.fillMaxSize().background(BoardColors.TableFelt),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "Loading model…",
-                color = BoardColors.Parchment,
-                fontSize = 14.sp,
-            )
-        }
+        MancalaLoadingScreen(
+            state = loadingState,
+            onRetry = { retryNonce++ },
+            modifier = modifier,
+        )
         return
     }
     val viewModel = remember(ai, aiMode) {
@@ -105,24 +109,43 @@ private object MancalaWeightsCache {
     private val mutex = Mutex()
     private var cachedBytes: ByteArray? = null
 
+    private val _state = MutableStateFlow<WeightLoadingState>(WeightLoadingState.Idle)
+    val state: StateFlow<WeightLoadingState> = _state.asStateFlow()
+
     suspend fun warm() {
         if (cachedBytes != null) return
         mutex.withLock {
             if (cachedBytes != null) return@withLock
-            cachedBytes = readWeightBytes()
+            cachedBytes = loadBytesWithState()
         }
     }
 
     suspend fun loadBackend(): AiBackend {
         val bytes = cachedBytes ?: mutex.withLock {
-            cachedBytes ?: readWeightBytes().also { cachedBytes = it }
+            cachedBytes ?: loadBytesWithState().also { cachedBytes = it }
         }
-        return createAiBackend(bytes)
+        // The platform's weight fetcher emits Initializing; that's the right state
+        // to keep showing while the engine spins up (worker construction + parse).
+        _state.value = WeightLoadingState.Initializing
+        try {
+            val backend = createAiBackend(bytes)
+            _state.value = WeightLoadingState.Ready
+            return backend
+        } catch (t: Throwable) {
+            _state.value = WeightLoadingState.Error(t)
+            throw t
+        }
     }
 
-    @OptIn(ExperimentalResourceApi::class)
-    private suspend fun readWeightBytes(): ByteArray =
-        Res.readBytes(NeuralNetEngine.WEIGHTS_RESOURCE_PATH)
+    private suspend fun loadBytesWithState(): ByteArray =
+        try {
+            fetchWeightBytes(MANCALA_WEIGHTS_VERSION) { phase ->
+                _state.value = phase
+            }
+        } catch (t: Throwable) {
+            _state.value = WeightLoadingState.Error(t)
+            throw t
+        }
 }
 
 /**
@@ -235,11 +258,11 @@ private fun MancalaBoardScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             NewGameButton(
-                text = "New Game — You First",
+                text = "New Game 1st player",
                 onClick = { viewModel.restart(HumanSide.PLAYER_ONE) },
             )
             NewGameButton(
-                text = "New Game — AI First",
+                text = "New Game 2nd player",
                 onClick = { viewModel.restart(HumanSide.PLAYER_TWO) },
             )
         }
