@@ -1,5 +1,6 @@
 package ai.sterling.util
 
+import ai.sterling.engine.MoveTelemetry
 import ai.sterling.model.Game.GameStatus
 
 /**
@@ -13,6 +14,10 @@ actual class GameLogger actual constructor() {
     }
 
     actual fun recordMove(absolutePocket: Int, wasPlayerOne: Boolean) {
+        // no-op
+    }
+
+    actual fun recordAiMove(telemetry: MoveTelemetry) {
         // no-op
     }
 

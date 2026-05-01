@@ -1,29 +1,30 @@
 package ai.sterling.data
 
-import ai.sterling.engine.ml.NeuralNetEngine
+import ai.sterling.AiMode
+import ai.sterling.aiDispatcher
+import ai.sterling.engine.AiBackend
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
 import ai.sterling.model.HumanSide
 import ai.sterling.repository.GameRepository
 import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.util.GameLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 
 class InMemoryGameRepository(
-    private val neuralNetEngine: NeuralNetEngine,
+    private val aiBackend: AiBackend,
     /**
-     * If > 0, AI uses iterative-deepening search with this wall-clock budget,
-     * adapting depth to the device's speed. If 0, falls back to the engine's
-     * fixed [NeuralNetEngine.selectMove] path (depth determined at engine creation).
+     * Selects which AI search algorithm runs and its budget. See [AiMode].
      */
-    private val aiTimeBudgetMs: Long = 0,
-    private val aiMaxDepth: Int = 6,
+    private val aiMode: AiMode = AiMode.AlphaBeta(),
     private val gameLogger: GameLogger = GameLogger(),
 ) : GameRepository {
 
@@ -71,17 +72,22 @@ class InMemoryGameRepository(
         // same event-loop tick as the state update and the human's animation
         // never gets to render.
         yield()
-        // Don't bother with withContext(Dispatchers.Default) — on Kotlin/Wasm
-        // there are no background threads, so it's the main dispatcher anyway.
-        // The engine yields cooperatively inside its search loop.
+        // Dispatch the search via [aiDispatcher]: on JVM that's a single-lane
+        // background dispatcher so the UI thread stays free during a multi-second
+        // budget; on Wasm it's an empty context (no background threads exist —
+        // the worker actual handles off-main work).
         return try {
-            val move = if (aiTimeBudgetMs > 0L) {
-                neuralNetEngine.selectMoveAdaptive(_game.value, aiTimeBudgetMs, aiMaxDepth)
-            } else {
-                neuralNetEngine.selectMove(_game.value)
-            }
-            println("[mancala] AI selected move=$move status=${_game.value.status}")
+            val move = withContext(aiDispatcher) { aiBackend.selectMove(_game.value, aiMode) }
+            // Pull telemetry from the most recent search and persist it. Backends that
+            // don't surface telemetry return null and we skip the log line.
+            aiBackend.lastSearchTelemetry()?.let { gameLogger.recordAiMove(it) }
             move
+        } catch (t: CancellationException) {
+            // Don't swallow cancellation: when the user restarts mid-think, the VM's
+            // collectLatest cancels this coroutine and we MUST propagate so the
+            // caller's `applyMove(ai)` line never runs. Otherwise a fallback move
+            // gets stamped onto the freshly-restarted game.
+            throw t
         } catch (t: Throwable) {
             println("[mancala] AI inference failed: ${t::class.simpleName}: ${t.message}")
             t.printStackTrace()
@@ -97,6 +103,10 @@ class InMemoryGameRepository(
         // operations sees a consistent (humanSide, game) pair.
         _humanSide.value = humanSide
         _game.value = Game.new()
+        // Drop any cached search tree from the previous game — the new initial
+        // position is rarely reachable from the prior root anyway, but doing this
+        // explicitly makes the contract obvious.
+        aiBackend.resetSearchState()
         gameLogger.startGame(humanIsPlayerOne = humanSide == HumanSide.PLAYER_ONE)
         _events.tryEmit(MoveEvent.Reset)
     }

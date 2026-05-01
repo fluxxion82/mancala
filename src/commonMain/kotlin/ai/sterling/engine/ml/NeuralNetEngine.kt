@@ -1,13 +1,17 @@
 package ai.sterling.engine.ml
 
+import ai.sterling.engine.MoveTelemetry
 import ai.sterling.mancala.resources.Res
 import ai.sterling.model.Board
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
+import ai.sterling.util.MancalaDebug
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.math.tanh
+import kotlin.random.Random
 import kotlin.time.TimeSource
 import kotlinx.coroutines.yield
 import org.jetbrains.compose.resources.ExperimentalResourceApi
@@ -213,9 +217,225 @@ class NeuralNetEngine private constructor(
             yield()
         }
 
-        val totalMs = mark.elapsedNow().inWholeMilliseconds
-        println("[mancala] adaptive search: depth=$reachedDepth time=${totalMs}ms budget=${timeBudgetMs}ms")
+        MancalaDebug.log {
+            "[mancala] adaptive search: depth=$reachedDepth time=${mark.elapsedNow().inWholeMilliseconds}ms budget=${timeBudgetMs}ms"
+        }
         return bestMove
+    }
+
+    /**
+     * AlphaZero-style PUCT MCTS, guided by the policy + value heads. See [PuctMcts].
+     *
+     * - [simulations] caps the number of tree visits per move (0 = no cap).
+     * - [timeBudgetMs] caps wall-clock per move (0 = no cap).
+     * - If both are 0, the search defaults to 200 simulations.
+     *
+     * If the model has no value head we fall back to a single policy-only forward pass
+     * — there's no signal for tree search to operate on without a value head.
+     */
+    // Persistent search tree across selectMoveMcts calls. After each search the root
+    // is advanced to the chosen child so the next call (after the opponent moves)
+    // can locate the new game state via PuctMcts.locateOrAdvance and inherit all the
+    // accumulated visit counts. Reset to null when:
+    //   - the engine is constructed fresh (no prior tree)
+    //   - a forced-move shortcut bypasses search (we don't know which subtree to keep)
+    //   - the cached subtree doesn't contain the new game state (rare, e.g. opponent
+    //     played a move we never visited under the old root's exploration budget)
+    private var currentRoot: PuctNode? = null
+
+    /**
+     * Counts AI moves played in the current game. Used to gate the opening
+     * temperature window: while this is below `AiMode.Mcts.openingTempPlies`
+     * the engine samples from the root visit-count distribution; after, it
+     * falls back to deterministic argmax. Reset to 0 when [resetSearchState]
+     * is called.
+     */
+    private var aiMoveIndexThisGame: Int = 0
+
+    /**
+     * Telemetry from the most recent [selectMoveMcts] call. `null` until at least
+     * one MCTS search has run on this engine instance, or after [resetSearchState]
+     * is called. Surfaced via [InProcessAiBackend.lastSearchTelemetry] for the
+     * repository to log on each AI move.
+     */
+    var lastTelemetry: MoveTelemetry? = null
+        private set
+
+    /**
+     * Reset the persistent search tree. Call this when starting a new game or when
+     * the game state has been externally mutated in a way that the cached tree
+     * can't follow (e.g. a programmatic restart).
+     */
+    fun resetSearchState() {
+        currentRoot = null
+        lastTelemetry = null
+        aiMoveIndexThisGame = 0
+    }
+
+    suspend fun selectMoveMcts(
+        game: Game,
+        simulations: Int = 0,
+        timeBudgetMs: Long = 0L,
+        cPuct: Float = 1.5f,
+        neuralWeight: Float = 0.7f,
+        openingTempPlies: Int = 0,
+        openingTemperature: Float = 1.0f,
+    ): Int {
+        val isPlayerOne = game.status == GameStatus.PlayerOneTurn
+        if (!hasValueHead) return selectMovePolicy(game.board, isPlayerOne)
+
+        // Forced-move shortcut: if there's only one legal move, take it without
+        // searching. We don't know which subtree corresponds to the post-move state
+        // without running expansion, so just discard the cached tree.
+        val legal = game.board.legalMoves(isPlayerOne)
+        if (legal.size == 1) {
+            currentRoot = null
+            MancalaDebug.log { "[mancala] forced move: ${legal[0]}" }
+            return legal[0]
+        }
+
+        val (hitsBefore, missesBefore, _) = ttSnapshot()
+
+        // Build a fresh PuctMcts per call so cPuct can be tuned without invalidating
+        // the persistent root. The PuctMcts struct itself is tiny — just three method
+        // closures and a constant. The accumulated search state lives on PuctNode.
+        val mcts = PuctMcts(
+            policyValue = { board, isP1 -> policyAndValue(board, isP1, neuralWeight) },
+            cPuct = cPuct,
+        )
+
+        // Tree reuse: walk the cached tree to find the current game state. If found,
+        // we inherit all its accumulated statistics; otherwise build a fresh root.
+        val cached = currentRoot?.let { mcts.locateOrAdvance(it, game) }
+        val root = cached ?: mcts.freshRoot(game)
+        val reusedVisits = if (cached != null) cached.visitCount else 0
+
+        val deterministicMove = mcts.search(root, simulations, timeBudgetMs)
+
+        // Opening variety: for the first N AI moves of a game, sample from the root
+        // visit-count distribution with temperature instead of taking the argmax.
+        // Search itself is unchanged — same priors, same visits — only the final
+        // root pick is randomized. Proven wins/losses remain deterministic;
+        // see [sampleVisitsWithTemperature].
+        val finalMove = if (
+            aiMoveIndexThisGame < openingTempPlies &&
+            openingTemperature > 0f &&
+            root.provenValue == null
+        ) {
+            sampleVisitsWithTemperature(root, openingTemperature)
+        } else {
+            deterministicMove
+        }
+        aiMoveIndexThisGame++
+
+        // Capture telemetry BEFORE re-rooting (root.n / root.prior are still the
+        // search-just-completed values; after re-rooting we'd be looking at the
+        // chosen child's data instead). The root-value lookup is a TT cache hit
+        // so it's effectively free.
+        val chosenRel = if (root.isPlayerOne) finalMove else finalMove - 7
+        val chosenQ = if (root.n[chosenRel] > 0) root.w[chosenRel] / root.n[chosenRel] else 0f
+        val (_, rootValue) = policyAndValue(root.game.board, root.isPlayerOne, neuralWeight)
+        val (hitsAfter, missesAfter, _) = ttSnapshot()
+        lastTelemetry = MoveTelemetry(
+            move = finalMove,
+            sims = mcts.lastSims,
+            timeMs = mcts.lastTimeMs,
+            rootValue = rootValue,
+            priors = root.prior.copyOf(),
+            visits = root.n.copyOf(),
+            chosenQ = chosenQ,
+            cacheHits = hitsAfter - hitsBefore,
+            cacheMisses = missesAfter - missesBefore,
+            reusedRootVisits = reusedVisits,
+        )
+
+        // Re-root for the next call: cache the subtree under the chosen move so that
+        // when the opponent responds we can pick up where we left off.
+        currentRoot = root.children[chosenRel]
+
+        MancalaDebug.log {
+            val total = (hitsAfter - hitsBefore) + (missesAfter - missesBefore)
+            val pct = if (total > 0) ((hitsAfter - hitsBefore) * 100 / total) else 0
+            "[mancala] tt: hits=${hitsAfter - hitsBefore} misses=${missesAfter - missesBefore} (${pct}%) cacheSize=${ttCache.size} reusedRootVisits=$reusedVisits"
+        }
+        return finalMove
+    }
+
+    /**
+     * Sample a move from the root's visit-count distribution with the given
+     * temperature: `P(a) ∝ visits(a)^(1/T)`. Used for opening variety; see the
+     * `openingTempPlies` knob on [ai.sterling.AiMode.Mcts].
+     *
+     * Safety rails: a proven-win child is taken deterministically (we never
+     * randomize away a forced win), proven-loss children are excluded from the
+     * pool, and if no usable visits exist the result falls back to the visit-
+     * count argmax.
+     */
+    private fun sampleVisitsWithTemperature(root: PuctNode, temperature: Float): Int {
+        // Always take a proven-win child if one exists.
+        for (rel in 0 until 6) {
+            if (!root.legalRel[rel]) continue
+            val child = root.children[rel] ?: continue
+            val cv = child.provenValue ?: continue
+            val asMover = if (root.isPlayerOne != child.isPlayerOne) -cv else cv
+            if (asMover >= 1f - 1e-6f) {
+                return if (root.isPlayerOne) rel else rel + 7
+            }
+        }
+
+        val invTemp = (1f / temperature).toDouble()
+        val weights = DoubleArray(6)
+        var sum = 0.0
+        for (rel in 0 until 6) {
+            if (!root.legalRel[rel]) continue
+            val child = root.children[rel]
+            val cv = child?.provenValue
+            if (cv != null) {
+                val asMover = if (root.isPlayerOne != child.isPlayerOne) -cv else cv
+                if (asMover <= -1f + 1e-6f) continue // proven loss — skip
+            }
+            if (root.n[rel] <= 0) continue
+            val w = root.n[rel].toDouble().pow(invTemp)
+            weights[rel] = w
+            sum += w
+        }
+
+        if (sum <= 0.0) return visitArgmaxFallback(root)
+
+        val r = Random.Default.nextDouble() * sum
+        var cum = 0.0
+        for (rel in 0 until 6) {
+            if (weights[rel] <= 0.0) continue
+            cum += weights[rel]
+            if (cum >= r) return if (root.isPlayerOne) rel else rel + 7
+        }
+        // Numerical fallback (shouldn't happen with positive sum).
+        return visitArgmaxFallback(root)
+    }
+
+    /** Visit-count argmax over legal moves; used when sampling can't proceed. */
+    private fun visitArgmaxFallback(root: PuctNode): Int {
+        var bestRel = -1
+        var bestN = -1
+        for (rel in 0 until 6) {
+            if (!root.legalRel[rel]) continue
+            if (root.n[rel] > bestN) {
+                bestN = root.n[rel]
+                bestRel = rel
+            }
+        }
+        if (bestRel < 0) {
+            // No moves visited at all — fall back to the prior's argmax.
+            var bestPrior = -1f
+            for (rel in 0 until 6) {
+                if (root.legalRel[rel] && root.prior[rel] > bestPrior) {
+                    bestPrior = root.prior[rel]
+                    bestRel = rel
+                }
+            }
+        }
+        if (bestRel < 0) bestRel = 0
+        return if (root.isPlayerOne) bestRel else bestRel + 7
     }
 
     private fun selectMovePolicy(board: Board, isPlayerOne: Boolean): Int {
@@ -334,15 +554,24 @@ class NeuralNetEngine private constructor(
     private fun evaluateBoard(board: Board, asPlayerOne: Boolean): Float {
         val obs = buildObs(board, asPlayerOne)
         val neuralValue = valueForward(obs)
+        val heuristicValue = computeHeuristicValue(board, asPlayerOne)
+        return 0.7f * neuralValue + 0.3f * heuristicValue
+    }
 
+    /**
+     * Mancala-difference heuristic from the current mover's POV, scaled to roughly
+     * `[-1, 1]`: weighs the mancala-mancala gap most, with a smaller bias from
+     * stones-on-side difference. Used as the heuristic side of the value blend in
+     * both [evaluateBoard] (alpha-beta path) and [policyAndValue] (MCTS path when
+     * `neuralWeight < 1`).
+     */
+    private fun computeHeuristicValue(board: Board, asPlayerOne: Boolean): Float {
         val pockets = board.pockets
         val myMancala = if (asPlayerOne) pockets[Board.PLAYER_ONE_MANCALA] else pockets[Board.PLAYER_TWO_MANCALA]
         val oppMancala = if (asPlayerOne) pockets[Board.PLAYER_TWO_MANCALA] else pockets[Board.PLAYER_ONE_MANCALA]
         val mySide = if (asPlayerOne) (0..5).sumOf { pockets[it] } else (7..12).sumOf { pockets[it] }
         val oppSide = if (asPlayerOne) (7..12).sumOf { pockets[it] } else (0..5).sumOf { pockets[it] }
-        val heuristicValue = (myMancala - oppMancala + 0.3f * (mySide - oppSide)) / 48f
-
-        return 0.7f * neuralValue + 0.3f * heuristicValue
+        return (myMancala - oppMancala + 0.3f * (mySide - oppSide)) / 48f
     }
 
     private fun evaluateTerminal(board: Board, asPlayerOne: Boolean): Float {
@@ -398,6 +627,137 @@ class NeuralNetEngine private constructor(
         return if (version >= 2) valueForwardV2(input) else valueForwardV1(input)
     }
 
+    /**
+     * Combined forward pass returning both policy logits and value scalar. On V2
+     * this folds the shared residual body so both heads see it once instead of
+     * twice — roughly halves the per-call cost on a cache miss. On V1 the heads
+     * have separate body layers, so there's no shared work to dedupe; this just
+     * calls them in sequence.
+     */
+    private fun policyAndValueForward(input: FloatArray): Pair<FloatArray, Float> {
+        return if (version >= 2) {
+            val shared = sharedBodyV2(input)
+            policyHeadV2(shared) to valueHeadV2(shared)
+        } else {
+            policyForwardV1(input) to valueForwardV1(input)
+        }
+    }
+
+    // Transposition table: caches (board, mover) → (priors, value). The same Mancala
+    // position is reached via many different move orderings (especially through
+    // mancala-landing chains), so a TT hit avoids a ~50ms forward pass on Wasm. The
+    // priors and value are pure functions of the input state, so caching is safe so
+    // long as no caller mutates the returned arrays — PuctMcts only reads them.
+    private val ttCache = HashMap<Long, Pair<FloatArray, Float>>()
+    private val ttMaxSize = 50_000
+    private var ttHits = 0L
+    private var ttMisses = 0L
+
+    /**
+     * Combined policy + value evaluation for [PuctMcts]. Returns:
+     *   - priors: a 6-vector with softmaxed policy logits over LEGAL relative actions
+     *     (illegal slots zeroed); priors are from the perspective of whoever's turn it
+     *     is on [board].
+     *   - value: scalar in roughly (-1, 1) from the same mover's perspective. When
+     *     [neuralWeight] < 1, blends the network's value head with a heuristic:
+     *     `neuralWeight * neural + (1 - neuralWeight) * heuristic`.
+     *
+     * The legal-mask + softmax is applied here so MCTS can treat the priors as a
+     * proper distribution over its 6 edge slots without any additional cleanup.
+     *
+     * Memoized via a transposition table keyed by board pockets + mover. The TT
+     * caches the *raw* network output so the [neuralWeight] blend can change
+     * between calls (e.g. for A/B testing) without invalidating cache entries.
+     */
+    internal fun policyAndValue(
+        board: Board,
+        isPlayerOne: Boolean,
+        neuralWeight: Float = 1.0f,
+    ): Pair<FloatArray, Float> {
+        val key = boardHashKey(board, isPlayerOne)
+        val cached = ttCache[key]
+        val priors: FloatArray
+        val rawNeural: Float
+        if (cached != null) {
+            ttHits++
+            priors = cached.first
+            rawNeural = cached.second
+        } else {
+            ttMisses++
+            val (newPriors, newValue) = computePolicyAndRawValue(board, isPlayerOne)
+            cacheStore(key, newPriors, newValue)
+            priors = newPriors
+            rawNeural = newValue
+        }
+        val blended = if (neuralWeight >= 0.999f) {
+            rawNeural
+        } else {
+            val heuristic = computeHeuristicValue(board, isPlayerOne)
+            neuralWeight * rawNeural + (1f - neuralWeight) * heuristic
+        }
+        // Clamp Q to [-1, 1]. V2's value head already saturates via tanh, but V1's
+        // doesn't (and the heuristic blend can push out of range when the network
+        // is poorly calibrated). PUCT's exploration term assumes Q ∈ [-1, 1]; an
+        // out-of-range Q dominates the prior contribution and breaks tactical
+        // search.
+        val finalValue = blended.coerceIn(-1f, 1f)
+        return priors to finalValue
+    }
+
+    /** Single forward pass + softmax + legal-mask. Used as the cache-miss path. */
+    private fun computePolicyAndRawValue(board: Board, isPlayerOne: Boolean): Pair<FloatArray, Float> {
+        val obs = buildObs(board, isPlayerOne)
+        // One pass for both heads — on V2 this avoids re-running the shared residual
+        // body twice (cuts cache-miss inference cost roughly in half).
+        val (logits, value) = policyAndValueForward(obs)
+
+        val legal = board.legalMoves(isPlayerOne)
+        val legalRel = if (isPlayerOne) legal else legal.map { it - 7 }
+
+        val priors = FloatArray(6)
+        if (legalRel.isNotEmpty()) {
+            var maxL = Float.NEGATIVE_INFINITY
+            for (i in legalRel) if (logits[i] > maxL) maxL = logits[i]
+            var sum = 0f
+            for (i in legalRel) {
+                val e = kotlin.math.exp((logits[i] - maxL).toDouble()).toFloat()
+                priors[i] = e
+                sum += e
+            }
+            if (sum > 0f) for (i in legalRel) priors[i] /= sum
+
+            if (legalRel.size > 1) {
+                val af = computeActionFeatures(board, isPlayerOne)
+                blendTacticalPrior(priors, af, legalRel)
+            }
+        }
+        return priors to value
+    }
+
+    /** Returns the running hit/miss totals since engine construction (for diagnostics). */
+    internal fun ttSnapshot(): Triple<Long, Long, Int> = Triple(ttHits, ttMisses, ttCache.size)
+
+    private fun cacheStore(key: Long, priors: FloatArray, value: Float) {
+        // Skip-on-full keeps the existing entries warm. The alternative (full clear)
+        // throws away thousands of useful evals to make room for the next position;
+        // skipping just costs one extra forward pass per future cache miss until the
+        // game ends. With a 5s desktop budget the cache fills exactly once, so the
+        // next move starts hot.
+        if (ttCache.size >= ttMaxSize) return
+        ttCache[key] = priors to value
+    }
+
+    private fun boardHashKey(board: Board, isPlayerOne: Boolean): Long {
+        // Polynomial accumulator over the 14 pockets + mover bit. Pocket counts are
+        // bounded by 48 (6 bits each), so 14 × 6 = 84 bits of entropy compressed into
+        // a 64-bit hash — collisions are essentially impossible for reachable states.
+        var h = if (isPlayerOne) 1L else 0L
+        for (i in 0 until 14) {
+            h = h * 31L + board.pockets[i].toLong()
+        }
+        return h
+    }
+
     // ---- V1 forward passes ----
 
     private fun policyForwardV1(input: FloatArray): FloatArray {
@@ -444,18 +804,22 @@ class NeuralNetEngine private constructor(
         return x
     }
 
-    private fun policyForwardV2(input: FloatArray): FloatArray {
-        val shared = sharedBodyV2(input)
-        // Policy head: Linear -> LN -> ReLU -> Linear
+    private fun policyForwardV2(input: FloatArray): FloatArray =
+        policyHeadV2(sharedBodyV2(input))
+
+    private fun valueForwardV2(input: FloatArray): Float =
+        valueHeadV2(sharedBodyV2(input))
+
+    /** Policy head: Linear -> LN -> ReLU -> Linear. */
+    private fun policyHeadV2(shared: FloatArray): FloatArray {
         var p = matVecMul(shared, v2PolicyW1!!, v2PolicyB1!!)
         p = layerNorm(p, v2PolicyLnScale!!, v2PolicyLnBias!!)
         p = relu(p)
         return matVecMul(p, v2PolicyW2!!, v2PolicyB2!!)
     }
 
-    private fun valueForwardV2(input: FloatArray): Float {
-        val shared = sharedBodyV2(input)
-        // Value head: Linear -> LN -> ReLU -> Linear -> tanh
+    /** Value head: Linear -> LN -> ReLU -> Linear -> tanh. */
+    private fun valueHeadV2(shared: FloatArray): Float {
         var v = matVecMul(shared, v2ValueW1!!, v2ValueB1!!)
         v = layerNorm(v, v2ValueLnScale!!, v2ValueLnBias!!)
         v = relu(v)

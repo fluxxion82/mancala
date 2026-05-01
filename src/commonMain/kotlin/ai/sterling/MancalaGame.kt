@@ -1,6 +1,7 @@
 package ai.sterling
 
 import ai.sterling.data.InMemoryGameRepository
+import ai.sterling.engine.AiBackend
 import ai.sterling.engine.ml.NeuralNetEngine
 import ai.sterling.mancala.resources.Res
 import ai.sterling.model.Board
@@ -12,6 +13,7 @@ import ai.sterling.ui.board.BoardLayout
 import ai.sterling.ui.board.TurnIndicator
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
+import ai.sterling.util.MancalaDebug
 import ai.sterling.viewmodel.MancalaBoardViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -48,35 +50,25 @@ import org.jetbrains.compose.resources.ExperimentalResourceApi
  * Public root composable for the game. Embed this from anywhere on a host project.
  * Handles async model loading and shows a placeholder while weights are downloading.
  *
- * AI strength controls (in priority order):
+ * [aiMode] selects between alpha-beta search ([AiMode.AlphaBeta]) — the original
+ * iterative-deepening engine — and AlphaZero-style PUCT MCTS ([AiMode.Mcts]) which
+ * uses the policy + value heads inside a tree search. Defaults to alpha-beta with
+ * a 600ms budget so behavior is unchanged unless callers opt in.
  *
- * - [aiTimeBudgetMs] — if > 0, the engine uses iterative-deepening search with this
- *   wall-clock budget per AI move. The depth reached is whatever fits in that budget,
- *   so the AI scales up automatically on faster devices. This is the recommended mode.
- *
- * - [aiMaxDepth] — hard cap on iterative deepening (so even an idle thread doesn't
- *   spend forever searching).
- *
- * - [searchDepth] — only used when [aiTimeBudgetMs] is 0. Fixed search depth, same
- *   knob as before. Kept for backwards compatibility / fully-deterministic play.
- *
- * Defaults: 600ms budget, max depth 6. Tuned to keep the browser responsive while
- * giving the AI enough time to look 2–4 plies ahead on a typical desktop browser.
- * Crank [aiTimeBudgetMs] up on the desktop app where there's a real thread pool.
+ * Crank up [AiMode.Mcts.timeBudgetMs] (or [AiMode.Mcts.simulations]) on desktop
+ * where there's a real thread pool — MCTS scales nicely with budget.
  */
 @Composable
 fun MancalaGame(
     modifier: Modifier = Modifier,
-    searchDepth: Int = 1,
-    aiTimeBudgetMs: Long = 600L,
-    aiMaxDepth: Int = 6,
+    aiMode: AiMode = AiMode.AlphaBeta(),
 ) {
-    var engine by remember { mutableStateOf<NeuralNetEngine?>(null) }
-    LaunchedEffect(searchDepth) {
-        engine = MancalaWeightsCache.loadEngine(searchDepth = searchDepth)
+    var backend by remember { mutableStateOf<AiBackend?>(null) }
+    LaunchedEffect(Unit) {
+        backend = MancalaWeightsCache.loadBackend()
     }
-    val nn = engine
-    if (nn == null) {
+    val ai = backend
+    if (ai == null) {
         Box(
             modifier = modifier.fillMaxSize().background(BoardColors.TableFelt),
             contentAlignment = Alignment.Center,
@@ -89,12 +81,11 @@ fun MancalaGame(
         }
         return
     }
-    val viewModel = remember(nn, aiTimeBudgetMs, aiMaxDepth) {
+    val viewModel = remember(ai, aiMode) {
         MancalaBoardViewModel(
             InMemoryGameRepository(
-                neuralNetEngine = nn,
-                aiTimeBudgetMs = aiTimeBudgetMs,
-                aiMaxDepth = aiMaxDepth,
+                aiBackend = ai,
+                aiMode = aiMode,
             ),
         )
     }
@@ -122,16 +113,44 @@ private object MancalaWeightsCache {
         }
     }
 
-    suspend fun loadEngine(searchDepth: Int): NeuralNetEngine {
+    suspend fun loadBackend(): AiBackend {
         val bytes = cachedBytes ?: mutex.withLock {
             cachedBytes ?: readWeightBytes().also { cachedBytes = it }
         }
-        return NeuralNetEngine.create(searchDepth = searchDepth, weightBytes = bytes)
+        return createAiBackend(bytes)
     }
 
     @OptIn(ExperimentalResourceApi::class)
     private suspend fun readWeightBytes(): ByteArray =
         Res.readBytes(NeuralNetEngine.WEIGHTS_RESOURCE_PATH)
+}
+
+/**
+ * Platform-specific factory: on JVM/desktop runs the engine in-process; on Wasm/web
+ * proxies to a Web Worker so inference doesn't block the UI thread.
+ */
+internal expect suspend fun createAiBackend(weightBytes: ByteArray): AiBackend
+
+/**
+ * CoroutineContext the repository uses to run AI compute. JVM = a single-lane
+ * `Dispatchers.Default` (the engine's mutable search tree + TT make concurrent calls
+ * unsafe, so we pin one worker thread) so the search doesn't block the UI thread.
+ * Wasm = `EmptyCoroutineContext` because the platform has no background threads;
+ * the worker actual handles off-main work via `MancalaBackendFactory.override`.
+ */
+internal expect val aiDispatcher: kotlin.coroutines.CoroutineContext
+
+/**
+ * Override hook for the wasm backend factory. The host site sets this at startup
+ * (e.g. to plug in a Web Worker host that knows its own bundle URL), and the
+ * platform-specific [createAiBackend] consults it before falling back to in-process.
+ *
+ * Setting this is a no-op on JVM. Kept in commonMain so the call site doesn't need
+ * platform-specific initialization code.
+ */
+public object MancalaBackendFactory {
+    /** Set by the host before the first [MancalaGame] mounts. */
+    public var override: (suspend (ByteArray) -> AiBackend)? = null
 }
 
 @Composable
@@ -164,11 +183,13 @@ private fun MancalaBoardScreen(
                         val isAiMove = side != null &&
                             ((event.isPlayerOne && side == HumanSide.PLAYER_TWO) ||
                                 (!event.isPlayerOne && side == HumanSide.PLAYER_ONE))
-                        println("[mancala] event MoveApplied pos=${event.position} isP1=${event.isPlayerOne} isAi=$isAiMove status=${event.statusAfter}")
+                        MancalaDebug.log {
+                            "[mancala] event MoveApplied pos=${event.position} isP1=${event.isPlayerOne} isAi=$isAiMove status=${event.statusAfter}"
+                        }
                         if (isAiMove) delay(Dimens.ThinkDelayMs)
                         animationState.playMove(event)
                         displayedStatus = event.statusAfter
-                        println("[mancala] event MoveApplied done pos=${event.position}")
+                        MancalaDebug.log { "[mancala] event MoveApplied done pos=${event.position}" }
                     }
                 }
             } catch (t: Throwable) {
