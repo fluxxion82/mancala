@@ -13,31 +13,27 @@ fun main() = application {
         state = remember { WindowState(size = DpSize(1000.dp, 900.dp)) },
         title = "Mancala",
     ) {
-        // Desktop has real threads, no UI cost from longer searches. With tree
-        // reuse the second move onwards inherits the previous turn's accumulated
-        // statistics, so this 5s budget is closer to "thousands of effective sims
-        // by mid-game" than "5s × 50 sims/s every turn".
+        // Stage D switch: AlphaBeta search at deploy time. The shipped Stage B
+        // iter-17 model is the on-policy convergence ceiling for vanilla
+        // AlphaZero MCTS — direct verification showed every additional
+        // training iteration regressed it. To make the engine materially
+        // stronger we wrap the same value head with deeper minimax search
+        // at runtime instead of training on top.
         //
-        // cPuct=1.8 broadens exploration past the policy net's top pick (slightly
-        // distrustful while the value head is small).
+        // selectMoveAdaptive iterative-deepens with a 5× safety multiplier
+        // on branching, so it stops before busting the time budget. With
+        // policy-ordered alpha-beta cuts on Mancala's branching ≈6 and the
+        // TT cache amortizing repeated positions, depth 7-8 is comfortably
+        // reachable inside the 5s desktop budget.
         //
-        // neuralWeight=0.5 gives the heuristic equal weight at leaves while the
-        // current value head is saturated above 0 (telemetry shows rootValue
-        // never goes negative across 100+ positions in lost games — calibration
-        // issue). Push back toward 0.85+ once a properly-calibrated model ships.
-        //
-        // openingTempPlies=4 with T=1.0 samples from the root visit-count
-        // distribution for the first 4 AI moves of each game so two replays
-        // of the same human moves don't produce identical games. After the
-        // window the AI returns to deterministic visit-count argmax. Proven
-        // wins are still always taken.
+        // evaluateBoard uses 0.7 * neuralValue + 0.3 * heuristicValue at
+        // leaves (NeuralNetEngine.evaluateBoard), so the trained value head
+        // still drives the search — alpha-beta is just a stronger backup
+        // operator than the on-policy MCTS that produced iter-17's targets.
         MancalaGame(
-            aiMode = AiMode.Mcts(
+            aiMode = AiMode.AlphaBeta(
                 timeBudgetMs = 5000L,
-                cPuct = 1.8f,
-                neuralWeight = 0.5f,
-                openingTempPlies = 4,
-                openingTemperature = 1.0f,
+                maxDepth = 8,
             ),
         )
     }

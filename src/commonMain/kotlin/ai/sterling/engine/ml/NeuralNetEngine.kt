@@ -16,6 +16,14 @@ import kotlin.time.TimeSource
 import kotlinx.coroutines.yield
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 
+// Stage E: quiescence search tuning. When alpha-beta reaches its depth limit
+// we extend by one ply if the side to move has a tactical move (capture or
+// score-and-go chain gaining >= QUIESCENCE_THRESHOLD stones). Capped at
+// MAX_QUIESCENCE_DEPTH extensions per branch so the search can't recurse
+// forever in tactical positions.
+private const val QUIESCENCE_THRESHOLD = 4
+private const val MAX_QUIESCENCE_DEPTH = 2
+
 class NeuralNetEngine private constructor(
     private val weights: ModelWeights,
     private val searchDepth: Int,
@@ -491,17 +499,52 @@ class NeuralNetEngine private constructor(
         return bestMove
     }
 
+    /**
+     * Maximum mancala-gain (captures + score-and-go chains) the
+     * [currentPlayer] could produce in a single move from this position.
+     * Used by [minimax]'s quiescence extension to decide whether the leaf
+     * is "non-quiet" — if so, the search extends one ply rather than
+     * letting the value head guess at a tactical state.
+     *
+     * Returns 0 for terminal positions (no legal moves).
+     */
+    private fun maxImmediateMancalaGain(board: Board, currentPlayer: Boolean): Int {
+        val mancalaIdx = if (currentPlayer) Board.PLAYER_ONE_MANCALA else Board.PLAYER_TWO_MANCALA
+        val baseline = board.pockets[mancalaIdx]
+        var best = 0
+        for (move in board.legalMoves(currentPlayer)) {
+            val r = board.playMove(move, currentPlayer)
+            val gain = r.board.pockets[mancalaIdx] - baseline
+            if (gain > best) best = gain
+        }
+        return best
+    }
+
     private fun minimax(
         board: Board, depth: Int, alpha: Float, beta: Float,
-        currentPlayer: Boolean, isMaximizing: Boolean, evalPlayer: Boolean
+        currentPlayer: Boolean, isMaximizing: Boolean, evalPlayer: Boolean,
+        quiescenceRemaining: Int = MAX_QUIESCENCE_DEPTH,
     ): Float {
         val legalMoves = board.legalMoves(currentPlayer)
+        if (legalMoves.isEmpty()) return evaluateTerminal(board, evalPlayer)
 
-        if (legalMoves.isEmpty() || depth <= 0) {
-            return if (legalMoves.isEmpty()) {
-                evaluateTerminal(board, evalPlayer)
+        // Stage E: quiescence extension. When we've reached the nominal
+        // depth limit, check if the position is "non-quiet" — i.e. the side
+        // to move has a tactical move that gains >= QUIESCENCE_THRESHOLD
+        // stones. If so, grant one more ply so the search resolves the
+        // tactic instead of evaluating with the value head, which is too
+        // saturated near +/- 1 to distinguish "lose by 25" from "lose by
+        // 17" reliably (Game 3 ply 24 from ~/mancala_games.jsonl). The
+        // quiescence counter caps total extensions per branch so the
+        // search can't recurse forever.
+        var effectiveDepth = depth
+        var qRemaining = quiescenceRemaining
+        if (effectiveDepth <= 0) {
+            if (qRemaining > 0 && maxImmediateMancalaGain(board, currentPlayer) >= QUIESCENCE_THRESHOLD) {
+                effectiveDepth = 1
+                qRemaining -= 1
             } else {
-                evaluateBoard(board, evalPlayer)
+                return evaluateBoard(board, evalPlayer)
             }
         }
 
@@ -523,9 +566,9 @@ class NeuralNetEngine private constructor(
                 val score = if (result.board.isGameOver()) {
                     evaluateTerminal(result.board, evalPlayer)
                 } else if (result.endsInMancala) {
-                    minimax(result.board, depth, a, b, currentPlayer, true, evalPlayer)
+                    minimax(result.board, effectiveDepth, a, b, currentPlayer, true, evalPlayer, qRemaining)
                 } else {
-                    minimax(result.board, depth - 1, a, b, !currentPlayer, false, evalPlayer)
+                    minimax(result.board, effectiveDepth - 1, a, b, !currentPlayer, false, evalPlayer, qRemaining)
                 }
                 maxScore = max(maxScore, score)
                 a = max(a, score)
@@ -539,9 +582,9 @@ class NeuralNetEngine private constructor(
                 val score = if (result.board.isGameOver()) {
                     evaluateTerminal(result.board, evalPlayer)
                 } else if (result.endsInMancala) {
-                    minimax(result.board, depth, a, b, currentPlayer, false, evalPlayer)
+                    minimax(result.board, effectiveDepth, a, b, currentPlayer, false, evalPlayer, qRemaining)
                 } else {
-                    minimax(result.board, depth - 1, a, b, !currentPlayer, true, evalPlayer)
+                    minimax(result.board, effectiveDepth - 1, a, b, !currentPlayer, true, evalPlayer, qRemaining)
                 }
                 minScore = min(minScore, score)
                 b = min(b, score)
@@ -552,32 +595,56 @@ class NeuralNetEngine private constructor(
     }
 
     private fun evaluateBoard(board: Board, asPlayerOne: Boolean): Float {
+        // Stage E: lower the heuristic share from 0.30 -> 0.15. iter-17's value
+        // head has value_corr ~0.97, so we trust it more directly. The
+        // remaining 0.15 is a coherent baseline that prevents pathological
+        // overconfidence in unfamiliar positions.
         val obs = buildObs(board, asPlayerOne)
         val neuralValue = valueForward(obs)
         val heuristicValue = computeHeuristicValue(board, asPlayerOne)
-        return 0.7f * neuralValue + 0.3f * heuristicValue
+        return 0.85f * neuralValue + 0.15f * heuristicValue
     }
 
     /**
-     * Mancala-difference heuristic from the current mover's POV, scaled to roughly
-     * `[-1, 1]`: weighs the mancala-mancala gap most, with a smaller bias from
-     * stones-on-side difference. Used as the heuristic side of the value blend in
-     * both [evaluateBoard] (alpha-beta path) and [policyAndValue] (MCTS path when
-     * `neuralWeight < 1`).
+     * Mancala-difference heuristic. Stage E simplified this to pure
+     * `(myMancala - oppMancala) / 48` from the prior form
+     * `(myMancala - oppMancala + 0.3 * (mySide - oppSide)) / 48`. The
+     * `mySide - oppSide` term structurally rewarded "leave a big target
+     * sitting on my side" over "disperse the threatened pile now", which
+     * destabilized iterative-deepening alpha-beta on capture-threat
+     * positions (Game 3 ply 24 in `~/mancala_games.jsonl` 2026-05-07).
+     * The simpler form matches [evaluateTerminal]'s shape, so leaf and
+     * terminal evaluations are on the same scale.
+     *
+     * Used as the heuristic side of the value blend in [evaluateBoard]
+     * (alpha-beta path) and [policyAndValue] (MCTS path when
+     * `neuralWeight < 1`). MCTS callers should set `neuralWeight = 1.0`
+     * to skip the heuristic blend entirely if they want the pre-Stage-E
+     * MCTS behavior preserved verbatim.
      */
     private fun computeHeuristicValue(board: Board, asPlayerOne: Boolean): Float {
         val pockets = board.pockets
         val myMancala = if (asPlayerOne) pockets[Board.PLAYER_ONE_MANCALA] else pockets[Board.PLAYER_TWO_MANCALA]
         val oppMancala = if (asPlayerOne) pockets[Board.PLAYER_TWO_MANCALA] else pockets[Board.PLAYER_ONE_MANCALA]
-        val mySide = if (asPlayerOne) (0..5).sumOf { pockets[it] } else (7..12).sumOf { pockets[it] }
-        val oppSide = if (asPlayerOne) (7..12).sumOf { pockets[it] } else (0..5).sumOf { pockets[it] }
-        return (myMancala - oppMancala + 0.3f * (mySide - oppSide)) / 48f
+        return (myMancala - oppMancala).toFloat() / 48f
     }
 
     private fun evaluateTerminal(board: Board, asPlayerOne: Boolean): Float {
+        // Stage E: return the actual outcome on the same scale the value head
+        // was TRAINED on (z in {-1, 0, +1}). The prior form `(myMancala -
+        // oppMancala) / 48` produced margin-sensitive terminal values like
+        // -0.583 for a 28-stone loss, while the value head reliably outputs
+        // values much closer to -1 for losing non-terminal positions. That
+        // scale mismatch made alpha-beta prefer a "definite small loss" over
+        // an "uncertain future" even when the uncertain future was clearly
+        // better — the root cause of the Game 3 ply 24 missed-defense bug.
         val myMancala = if (asPlayerOne) board.pockets[Board.PLAYER_ONE_MANCALA] else board.pockets[Board.PLAYER_TWO_MANCALA]
         val oppMancala = if (asPlayerOne) board.pockets[Board.PLAYER_TWO_MANCALA] else board.pockets[Board.PLAYER_ONE_MANCALA]
-        return (myMancala - oppMancala).toFloat() / 48f
+        return when {
+            myMancala > oppMancala -> 1.0f
+            myMancala < oppMancala -> -1.0f
+            else -> 0.0f
+        }
     }
 
     private fun buildObs(board: Board, isPlayerOne: Boolean): FloatArray {
