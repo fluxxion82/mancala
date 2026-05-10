@@ -12,7 +12,7 @@ import ai.sterling.model.HumanSide
 import ai.sterling.ui.animation.MancalaBoardAnimationState
 import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.ui.board.BoardLayout
-import ai.sterling.ui.board.SidePickerDialog
+import ai.sterling.ui.board.SidePickerOverlay
 import ai.sterling.ui.board.TurnIndicator
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
@@ -22,10 +22,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
@@ -233,59 +231,62 @@ private fun MancalaBoardScreen(
         else -> null
     }
 
-    Column(
-        modifier = modifier.fillMaxSize().background(BoardColors.TableFelt),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        BoardLayout(
-            animationState = animationState,
-            onPitClick = viewModel::onPitClick,
-            isLegalMove = viewModel::isLegalMove,
-            activeMancala = activeMancala,
-            humanSide = humanSide,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 25.dp, vertical = 16.dp),
-        )
-
-        TurnIndicator(
-            status = displayedStatus,
-            humanSide = humanSide,
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-        )
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(bottom = 20.dp),
-            contentAlignment = Alignment.Center,
+    Box(modifier = modifier.fillMaxSize().background(BoardColors.TableFelt)) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            when {
-                humanSide != null && displayedStatus is Game.GameStatus.Finished ->
-                    NewGameButton(
-                        text = "New Game",
-                        onClick = viewModel::onOpenSidePicker,
-                    )
-                humanSide != null ->
-                    NewGameButton(
-                        text = "Resign",
-                        onClick = viewModel::onOpenSidePicker,
-                    )
-                else ->
-                    // NotStarted: reserve the bottom area's height so picking a side
-                    // doesn't shift the board upward when the dialog dismisses.
-                    Spacer(Modifier.height(36.dp))
+            BoardLayout(
+                animationState = animationState,
+                onPitClick = viewModel::onPitClick,
+                isLegalMove = viewModel::isLegalMove,
+                activeMancala = activeMancala,
+                humanSide = humanSide,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 25.dp, vertical = 16.dp),
+            )
+
+            TurnIndicator(
+                status = displayedStatus,
+                humanSide = humanSide,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    humanSide != null && displayedStatus is Game.GameStatus.Finished ->
+                        NewGameButton(
+                            text = "New Game",
+                            onClick = viewModel::onOpenSidePicker,
+                        )
+                    humanSide != null ->
+                        NewGameButton(
+                            text = "Resign",
+                            onClick = viewModel::onOpenSidePicker,
+                        )
+                    else ->
+                        NewGameButton(
+                            text = "Start",
+                            onClick = viewModel::onOpenSidePicker,
+                        )
+                }
             }
         }
-    }
 
-    if (showSidePicker) {
-        SidePickerDialog(
-            dismissible = humanSide != null,
-            onSideChosen = viewModel::onSideChosen,
-            onDismiss = viewModel::onDismissSidePicker,
-        )
+        if (showSidePicker) {
+            SidePickerOverlay(
+                dismissible = humanSide != null,
+                onSideChosen = viewModel::onSideChosen,
+                onDismiss = viewModel::onDismissSidePicker,
+            )
+        }
     }
 }
 

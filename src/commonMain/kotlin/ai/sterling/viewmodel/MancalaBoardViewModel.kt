@@ -24,7 +24,7 @@ class MancalaBoardViewModel(
     val humanSide: StateFlow<HumanSide?> = repository.humanSide
     val events: SharedFlow<MoveEvent> = repository.events
 
-    private val _showSidePicker = MutableStateFlow(true)
+    private val _showSidePicker = MutableStateFlow(false)
     val showSidePicker: StateFlow<Boolean> = _showSidePicker.asStateFlow()
 
     init {
