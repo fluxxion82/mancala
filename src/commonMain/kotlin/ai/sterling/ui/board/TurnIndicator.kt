@@ -24,6 +24,7 @@ fun TurnIndicator(
     humanSide: HumanSide?,
     modifier: Modifier = Modifier,
 ) {
+    if (humanSide == null) return
     val (label, accent) = labelFor(status, humanSide)
 
     Box(
@@ -55,10 +56,7 @@ private val ComputerTurn = "Computer thinking…" to Color(0xFFB87333)
 private val YouWin = "You win!" to BoardColors.GlowAmber
 private val ComputerWins = "Computer wins" to Color(0xFFEF476F)
 
-private val ChooseSide = "Choose your side to begin" to BoardColors.GlowAmber
-
 private fun labelFor(status: Game.GameStatus, humanSide: HumanSide?): Pair<String, Color> {
-    if (humanSide == null) return ChooseSide
     return when (status) {
         Game.GameStatus.PlayerOneTurn ->
             if (humanSide == HumanSide.PLAYER_ONE) YourTurn else ComputerTurn

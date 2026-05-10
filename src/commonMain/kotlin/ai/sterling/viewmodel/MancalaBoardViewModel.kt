@@ -8,8 +8,10 @@ import ai.sterling.repository.GameRepository
 import ai.sterling.ui.animation.MoveEvent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -21,6 +23,9 @@ class MancalaBoardViewModel(
     val game: StateFlow<Game> = repository.game
     val humanSide: StateFlow<HumanSide?> = repository.humanSide
     val events: SharedFlow<MoveEvent> = repository.events
+
+    private val _showSidePicker = MutableStateFlow(true)
+    val showSidePicker: StateFlow<Boolean> = _showSidePicker.asStateFlow()
 
     init {
         // Auto-pump AI moves whenever (game, humanSide) settles on a state where
@@ -63,5 +68,18 @@ class MancalaBoardViewModel(
 
     fun restart(side: HumanSide) {
         repository.restart(side)
+    }
+
+    fun onOpenSidePicker() {
+        _showSidePicker.value = true
+    }
+
+    fun onDismissSidePicker() {
+        _showSidePicker.value = false
+    }
+
+    fun onSideChosen(side: HumanSide) {
+        repository.restart(side)
+        _showSidePicker.value = false
     }
 }

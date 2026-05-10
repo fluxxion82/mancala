@@ -12,6 +12,7 @@ import ai.sterling.model.HumanSide
 import ai.sterling.ui.animation.MancalaBoardAnimationState
 import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.ui.board.BoardLayout
+import ai.sterling.ui.board.SidePickerDialog
 import ai.sterling.ui.board.TurnIndicator
 import ai.sterling.ui.theme.BoardColors
 import ai.sterling.ui.theme.Dimens
@@ -19,10 +20,12 @@ import ai.sterling.util.MancalaDebug
 import ai.sterling.viewmodel.MancalaBoardViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
@@ -183,6 +186,7 @@ private fun MancalaBoardScreen(
 ) {
     val animationState = remember { MancalaBoardAnimationState() }
     val humanSide by viewModel.humanSide.collectAsState()
+    val showSidePicker by viewModel.showSidePicker.collectAsState()
 
     // Glow follows what's *visible* on the board, not the live game truth — so the
     // mancala glow stays put during a player's animation and only flips once the
@@ -251,21 +255,37 @@ private fun MancalaBoardScreen(
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
 
-        Row(
+        Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .padding(bottom = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            NewGameButton(
-                text = "New Game 1st player",
-                onClick = { viewModel.restart(HumanSide.PLAYER_ONE) },
-            )
-            NewGameButton(
-                text = "New Game 2nd player",
-                onClick = { viewModel.restart(HumanSide.PLAYER_TWO) },
-            )
+            when {
+                humanSide != null && displayedStatus is Game.GameStatus.Finished ->
+                    NewGameButton(
+                        text = "New Game",
+                        onClick = viewModel::onOpenSidePicker,
+                    )
+                humanSide != null ->
+                    NewGameButton(
+                        text = "Resign",
+                        onClick = viewModel::onOpenSidePicker,
+                    )
+                else ->
+                    // NotStarted: reserve the bottom area's height so picking a side
+                    // doesn't shift the board upward when the dialog dismisses.
+                    Spacer(Modifier.height(36.dp))
+            }
         }
+    }
+
+    if (showSidePicker) {
+        SidePickerDialog(
+            dismissible = humanSide != null,
+            onSideChosen = viewModel::onSideChosen,
+            onDismiss = viewModel::onDismissSidePicker,
+        )
     }
 }
 
