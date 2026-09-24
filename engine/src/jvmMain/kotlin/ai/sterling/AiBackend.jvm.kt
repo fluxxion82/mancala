@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /** JVM/desktop runs the engine in-process — real threads, no need for a worker. */
-internal actual suspend fun createAiBackend(weightBytes: ByteArray): AiBackend =
+actual suspend fun createAiBackend(weightBytes: ByteArray): AiBackend =
     NeuralNetEngine.create(searchDepth = 1, weightBytes = weightBytes).asBackend()
 
 /**

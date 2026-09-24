@@ -1,7 +1,6 @@
 package ai.sterling.engine.ml
 
 import ai.sterling.engine.MoveTelemetry
-import ai.sterling.mancala.resources.Res
 import ai.sterling.model.Board
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
@@ -14,7 +13,6 @@ import kotlin.math.tanh
 import kotlin.random.Random
 import kotlin.time.TimeSource
 import kotlinx.coroutines.yield
-import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 // Stage E: quiescence search tuning. When alpha-beta reaches its depth limit
 // we extend by one ply if the side to move has a tactical move (capture or
@@ -1025,15 +1023,15 @@ class NeuralNetEngine private constructor(
     }
 
     companion object {
-        @OptIn(ExperimentalResourceApi::class)
-        suspend fun create(searchDepth: Int = 5): NeuralNetEngine {
-            val bytes = Res.readBytes(WEIGHTS_RESOURCE_PATH)
-            return NeuralNetEngine(parseWeights(bytes), searchDepth)
-        }
-
+        /**
+         * Parses [weightBytes] (uncompressed `mancala_weights.bin`, see [parseWeights])
+         * and builds an engine. [searchDepth] is the fixed alpha-beta depth used by
+         * [selectMove]; [selectMoveAdaptive] / [selectMoveMcts] take their own budgets.
+         */
         suspend fun create(searchDepth: Int, weightBytes: ByteArray): NeuralNetEngine =
             NeuralNetEngine(parseWeights(weightBytes), searchDepth)
 
+        /** Compose Resources path of the weights inside the `ai.sterling:mancala` UI module. */
         const val WEIGHTS_RESOURCE_PATH = "files/mancala_weights.bin"
     }
 }

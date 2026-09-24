@@ -12,6 +12,21 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+// Toolchain repositories are declared in settings.gradle.kts (FAIL_ON_PROJECT_REPOS);
+// stop the Kotlin/Wasm plugin from adding its own, in every project that applies it.
+allprojects {
+    plugins.withId("org.jetbrains.kotlin.multiplatform") {
+        afterEvaluate {
+            extensions.findByType<org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec>()
+                ?.downloadBaseUrl?.set(null as String?)
+            extensions.findByType<org.jetbrains.kotlin.gradle.targets.wasm.yarn.WasmYarnRootEnvSpec>()
+                ?.downloadBaseUrl?.set(null as String?)
+            extensions.findByType<org.jetbrains.kotlin.gradle.targets.wasm.binaryen.BinaryenEnvSpec>()
+                ?.downloadBaseUrl?.set(null as String?)
+        }
+    }
+}
+
 group = "ai.sterling"
 version = "1.0-SNAPSHOT"
 
@@ -21,12 +36,23 @@ kotlin {
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
         outputModuleName = "mancala"
-        browser {}
+        browser {
+            // Karma's webpack bundle can't load the ES-module wasm test binary
+            // ("Cannot use 'import.meta' outside a module"), and Compose's wasm
+            // runtime won't start under Node. commonTest here (SowingPlanner) is pure
+            // logic and runs in jvmTest; the engine's wasm tests run on Node.
+            testTask { enabled = false }
+        }
     }
 
     sourceSets {
         val commonMain by getting {
             dependencies {
+                // Rules, model, search, NN inference and GameSession. api() so consumers
+                // of ai.sterling:mancala (the website) keep seeing ai.sterling.model.*,
+                // ai.sterling.engine.*, AiMode, MancalaBackendFactory, etc.
+                api(project(":engine"))
+
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material)
@@ -34,7 +60,6 @@ kotlin {
                 implementation(compose.components.resources)
 
                 implementation(libs.kotlinx.coroutines.core)
-                implementation(libs.kotlinx.io.core)
                 implementation(libs.lifecycle.viewmodel)
             }
         }
@@ -132,50 +157,6 @@ val compressWeights by tasks.registering {
 // Hashes the uncompressed weights so we can derive a version string for the
 // IndexedDB cache key. The .bin contents fully determine the hash — retraining
 // changes it, which forces a fresh download and overwrites the stale cache entry.
-val generateWeightsVersion by tasks.registering {
-    description = "Generate MancalaWeightsVersion.kt with a SHA-256 of the uncompressed weights"
-    group = "build"
-
-    val binIn = layout.projectDirectory.file("src/commonMain/composeResources/files/mancala_weights.bin")
-    val outDir = layout.buildDirectory.dir("generated/source/weightsVersion/commonMain/ai/sterling/loading")
-    inputs.file(binIn)
-    outputs.dir(outDir)
-
-    doLast {
-        val digest = MessageDigest.getInstance("SHA-256")
-        FileInputStream(binIn.asFile).use { input ->
-            val buf = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buf)
-                if (n <= 0) break
-                digest.update(buf, 0, n)
-            }
-        }
-        val hex = digest.digest().joinToString("") { "%02x".format(it) }
-        val short = hex.substring(0, 16)
-        val out = outDir.get().asFile
-        out.mkdirs()
-        out.resolve("MancalaWeightsVersion.kt").writeText(
-            """
-            |package ai.sterling.loading
-            |
-            |internal const val MANCALA_WEIGHTS_VERSION: String = "$short"
-            |
-            """.trimMargin(),
-        )
-    }
-}
-
-// Wire generated source dir + ensure resources contain the gzipped + versioned blobs
-// before any Kotlin compilation or resource processing runs.
-kotlin.sourceSets.named("commonMain") {
-    kotlin.srcDir(generateWeightsVersion.map { layout.buildDirectory.dir("generated/source/weightsVersion/commonMain").get().asFile })
-}
-
-tasks.matching { it.name.startsWith("compile") && it.name.contains("Kotlin") }.configureEach {
-    dependsOn(generateWeightsVersion)
-}
-
 tasks.matching {
     // Cover all per-target processResources tasks so compressWeights runs before
     // the .gz lands in the build output.

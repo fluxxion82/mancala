@@ -1,73 +1,42 @@
 package ai.sterling.viewmodel
 
-import ai.sterling.model.Board
 import ai.sterling.model.Game
 import ai.sterling.model.HumanSide
-import ai.sterling.model.isHumansTurn
+import ai.sterling.model.MoveEvent
 import ai.sterling.repository.GameRepository
-import ai.sterling.ui.animation.MoveEvent
+import ai.sterling.session.GameSession
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
+/**
+ * Compose-side wrapper around the engine's UI-agnostic [GameSession]. The session
+ * owns the game flow (turns, AI replies, restarts); this adds only the side-picker
+ * overlay state and ties the session's lifetime to [viewModelScope].
+ */
 class MancalaBoardViewModel(
-    private val repository: GameRepository,
+    repository: GameRepository,
 ) : ViewModel() {
-    val game: StateFlow<Game> = repository.game
-    val humanSide: StateFlow<HumanSide?> = repository.humanSide
-    val events: SharedFlow<MoveEvent> = repository.events
+    private val session = GameSession(repository, viewModelScope)
+
+    val game: StateFlow<Game> = session.game
+    val humanSide: StateFlow<HumanSide?> = session.humanSide
+    val events: SharedFlow<MoveEvent> = session.events
 
     private val _showSidePicker = MutableStateFlow(false)
     val showSidePicker: StateFlow<Boolean> = _showSidePicker.asStateFlow()
 
-    init {
-        // Auto-pump AI moves whenever (game, humanSide) settles on a state where
-        // it is the AI's turn. The repository is purely data; the VM is responsible
-        // for advancing the game when the human is not the next mover.
-        viewModelScope.launch {
-            combine(game, humanSide) { g, h -> g to h }
-                .distinctUntilChanged()
-                .collectLatest { (g, side) ->
-                    // collectLatest cancels this block if a new state arrives while
-                    // computeAiMove is still suspended (e.g. user restarts mid-think).
-                    side ?: return@collectLatest
-                    val status = g.status
-                    if (status is Game.GameStatus.Finished) return@collectLatest
-                    if (status.isHumansTurn(side)) return@collectLatest
-
-                    val ai = repository.computeAiMove()
-                    repository.applyMove(ai)
-                }
-        }
-    }
-
-    fun isLegalMove(position: Int): Boolean {
-        if (position == Board.PLAYER_ONE_MANCALA || position == Board.PLAYER_TWO_MANCALA) return false
-        val side = humanSide.value ?: return false
-        val status = game.value.status
-        if (!status.isHumansTurn(side)) return false
-        val onHumansSide = when (side) {
-            HumanSide.PLAYER_ONE -> position in 0..5
-            HumanSide.PLAYER_TWO -> position in 7..12
-        }
-        if (!onHumansSide) return false
-        return game.value.board.pockets[position] > 0
-    }
+    fun isLegalMove(position: Int): Boolean = session.isLegalMove(position)
 
     fun onPitClick(position: Int) {
-        if (!isLegalMove(position)) return
-        repository.applyMove(position)
+        session.playHumanMove(position)
     }
 
     fun restart(side: HumanSide) {
-        repository.restart(side)
+        session.restart(side)
     }
 
     fun onOpenSidePicker() {
@@ -79,7 +48,7 @@ class MancalaBoardViewModel(
     }
 
     fun onSideChosen(side: HumanSide) {
-        repository.restart(side)
+        session.restart(side)
         _showSidePicker.value = false
     }
 }

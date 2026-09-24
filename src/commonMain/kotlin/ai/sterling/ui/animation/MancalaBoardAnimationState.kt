@@ -1,6 +1,7 @@
 package ai.sterling.ui.animation
 
 import ai.sterling.model.Board
+import ai.sterling.model.MoveEvent
 import ai.sterling.ui.theme.Dimens
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing

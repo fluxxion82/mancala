@@ -55,7 +55,7 @@ class NeuralNetEngineQuiescenceTest {
         require(pockets.sum() == 48) { "Test position must sum to 48 stones." }
 
         val game = Game.newGameWithPosition(pockets, isPlayerOneTurn = false)
-        val engine = NeuralNetEngine.create(searchDepth = 6)
+        val engine = testEngine(searchDepth = 6)
         val move = engine.selectMove(game)
 
         assertTrue(
@@ -80,7 +80,7 @@ class NeuralNetEngineQuiescenceTest {
             7,
         )
         val game = Game.newGameWithPosition(pockets, isPlayerOneTurn = false)
-        val engine = NeuralNetEngine.create(searchDepth = 8)
+        val engine = testEngine(searchDepth = 8)
         // 2-second budget is more than enough on JVM to reach depth 6+ on this
         // shallow-stone position; the deployed engine has 5s on desktop.
         val move = engine.selectMoveAdaptive(game, timeBudgetMs = 2000L, maxDepth = 8)
@@ -121,7 +121,7 @@ class NeuralNetEngineQuiescenceTest {
         val game = Game.newGameWithPosition(pockets, isPlayerOneTurn = false)
         println("[Game 3 ply 24 diagnostic] move chosen at each fixed depth:")
         for (d in 1..8) {
-            val engine = NeuralNetEngine.create(searchDepth = d)
+            val engine = testEngine(searchDepth = d)
             val move = engine.selectMove(game)
             val tag = when (move) {
                 10, 12 -> "OK (defensive)"
@@ -130,7 +130,7 @@ class NeuralNetEngineQuiescenceTest {
             }
             println("  depth=$d -> pit $move  $tag")
         }
-        val engineAdaptive = NeuralNetEngine.create(searchDepth = 8)
+        val engineAdaptive = testEngine(searchDepth = 8)
         val moveAdaptive = engineAdaptive.selectMoveAdaptive(game, timeBudgetMs = 2000L, maxDepth = 8)
         println("  selectMoveAdaptive(2000ms, maxDepth=8) -> pit $moveAdaptive")
     }
@@ -146,7 +146,7 @@ class NeuralNetEngineQuiescenceTest {
         require(pockets.sum() == 48)
 
         val game = Game.newGameWithPosition(pockets, isPlayerOneTurn = false)
-        val engine = NeuralNetEngine.create(searchDepth = 8)
+        val engine = testEngine(searchDepth = 8)
         val move = engine.selectMoveAdaptive(game, timeBudgetMs = 2000L, maxDepth = 8)
 
         println(

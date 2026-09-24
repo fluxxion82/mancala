@@ -12,7 +12,7 @@ import kotlin.coroutines.EmptyCoroutineContext
  * none is configured. The override is set in commonMain — the host doesn't need
  * platform-specific glue to install a worker.
  */
-internal actual suspend fun createAiBackend(weightBytes: ByteArray): AiBackend {
+actual suspend fun createAiBackend(weightBytes: ByteArray): AiBackend {
     MancalaBackendFactory.override?.let { return it(weightBytes) }
     return NeuralNetEngine.create(searchDepth = 1, weightBytes = weightBytes).asBackend()
 }

@@ -5,7 +5,7 @@ package ai.sterling.util
  * spammy during normal play. Flip [enabled] to true to surface the per-move sims/
  * time/TT/event prints. Errors and `printStackTrace` calls are not gated by this.
  */
-internal object MancalaDebug {
+object MancalaDebug {
     var enabled: Boolean = false
 
     inline fun log(message: () -> String) {

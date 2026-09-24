@@ -2,7 +2,7 @@ package ai.sterling.repository
 
 import ai.sterling.model.Game
 import ai.sterling.model.HumanSide
-import ai.sterling.ui.animation.MoveEvent
+import ai.sterling.model.MoveEvent
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 

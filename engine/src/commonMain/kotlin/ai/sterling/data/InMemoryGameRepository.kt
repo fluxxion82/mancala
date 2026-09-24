@@ -6,8 +6,8 @@ import ai.sterling.engine.AiBackend
 import ai.sterling.model.Game
 import ai.sterling.model.Game.GameStatus
 import ai.sterling.model.HumanSide
+import ai.sterling.model.MoveEvent
 import ai.sterling.repository.GameRepository
-import ai.sterling.ui.animation.MoveEvent
 import ai.sterling.util.GameLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,7 +25,8 @@ class InMemoryGameRepository(
      * Selects which AI search algorithm runs and its budget. See [AiMode].
      */
     private val aiMode: AiMode = AiMode.AlphaBeta(),
-    private val gameLogger: GameLogger = GameLogger(),
+    /** Records games (JVM: ~/mancala_games.jsonl, wasm: remote log). null disables logging. */
+    private val gameLogger: GameLogger? = GameLogger(),
 ) : GameRepository {
 
     private val _game = MutableStateFlow(Game.new())
@@ -50,9 +51,9 @@ class InMemoryGameRepository(
         }
 
         _game.value = newGame
-        gameLogger.recordMove(position, isP1)
+        gameLogger?.recordMove(position, isP1)
         if (newGame.status is GameStatus.Finished) {
-            gameLogger.endGame(newGame.status)
+            gameLogger?.endGame(newGame.status)
         }
 
         _events.tryEmit(
@@ -80,7 +81,7 @@ class InMemoryGameRepository(
             val move = withContext(aiDispatcher) { aiBackend.selectMove(_game.value, aiMode) }
             // Pull telemetry from the most recent search and persist it. Backends that
             // don't surface telemetry return null and we skip the log line.
-            aiBackend.lastSearchTelemetry()?.let { gameLogger.recordAiMove(it) }
+            aiBackend.lastSearchTelemetry()?.let { gameLogger?.recordAiMove(it) }
             move
         } catch (t: CancellationException) {
             // Don't swallow cancellation: when the user restarts mid-think, the VM's
@@ -107,7 +108,7 @@ class InMemoryGameRepository(
         // position is rarely reachable from the prior root anyway, but doing this
         // explicitly makes the contract obvious.
         aiBackend.resetSearchState()
-        gameLogger.startGame(humanIsPlayerOne = humanSide == HumanSide.PLAYER_ONE)
+        gameLogger?.startGame(humanIsPlayerOne = humanSide == HumanSide.PLAYER_ONE)
         _events.tryEmit(MoveEvent.Reset)
     }
 }
