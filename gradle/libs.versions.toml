@@ -3,7 +3,7 @@
 lifecycleViewmodel = "2.10.0"
 
 # Dependencies
-kotlin = "2.4.0-Beta2"
+kotlin = "2.4.20"
 coroutines = "1.10.2"
 kotlinxIoCore = "0.9.0"
 
